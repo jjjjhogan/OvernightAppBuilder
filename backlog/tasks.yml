@@ -1,0 +1,16 @@
+tasks:
+  - id: TASK-001
+    title: Implement goal-to-task planner
+    status: todo
+    owner: main
+    artifact: src/overnight_app_maker/planner.py
+  - id: TASK-002
+    title: Implement OpenClaw session runner adapter
+    status: todo
+    owner: main
+    artifact: src/overnight_app_maker/runner.py
+  - id: TASK-003
+    title: Build Kanban board integration
+    status: todo
+    owner: main
+    artifact: docs/kanban.md

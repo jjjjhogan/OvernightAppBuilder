@@ -1,0 +1,17 @@
+schedule:
+  daily_planning_time: "08:00"
+  timezone: "America/Los_Angeles"
+
+goals:
+  default_file: "goals/GOALS.example.md"
+
+execution:
+  default_mode: "dry-run"
+  max_daily_tasks: 5
+  allow_external_actions: false
+
+outputs:
+  apps_dir: "apps"
+  research_dir: "research"
+  reports_dir: "reports"
+  logs_dir: "logs"

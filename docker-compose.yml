@@ -1,0 +1,6 @@
+services:
+  overnight-app-maker:
+    build: .
+    volumes:
+      - .:/app
+    command: ["overnight-app-maker", "--goals", "goals/GOALS.example.md", "--dry-run"]
