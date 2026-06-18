@@ -64,6 +64,51 @@ def build_session_key(agent_id: str, task_id: str) -> str:
     return f"overnight-{slug}"
 
 
+def build_spawn_message(*, prompt_path: Path, project_root: Path) -> str:
+    brief_path = prompt_path.resolve().as_posix()
+    root = project_root.resolve().as_posix()
+    return (
+        "Read the worker task brief at this absolute path, then execute it exactly:\n"
+        f"{brief_path}\n\n"
+        f"Use project root {root} for all file paths.\n"
+        "Write artifacts only to the absolute output directory named in the brief.\n"
+        "Append the completion line to the absolute tasks-log path named in the brief."
+    )
+
+
+def extract_agent_reply(stdout: str) -> str:
+    if not stdout.strip():
+        return "Worker run finished"
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout.strip()[:500]
+
+    payloads = payload.get("payloads")
+    if not payloads:
+        result = payload.get("result")
+        if isinstance(result, dict):
+            payloads = result.get("payloads")
+
+    if payloads and isinstance(payloads, list) and payloads and isinstance(payloads[0], dict):
+        text = payloads[0].get("text")
+        if text:
+            return str(text).strip()[:500]
+
+    return "Worker run finished"
+
+
+def looks_like_deferred_reply(text: str) -> bool:
+    lowered = text.lower()
+    markers = (
+        "please provide",
+        "provide the specific details",
+        "need more information",
+        "what task should",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def spawn_worker(
     *,
     task_id: str,
@@ -72,13 +117,24 @@ def spawn_worker(
     agent_id: str = "main",
     timeout_seconds: int = 600,
     use_local: bool = False,
+    queue_dir: str = "logs/worker-queue",
 ) -> WorkerRunResult:
     session_key = build_session_key(agent_id, task_id)
+    queue_worker_prompt(
+        task_id=task_id,
+        prompt=prompt,
+        project_root=project_root,
+        queue_dir=queue_dir,
+    )
+    prompt_path = project_root / queue_dir / f"{task_id}.prompt.txt"
+    message = build_spawn_message(prompt_path=prompt_path, project_root=project_root)
+
     agent_args = [
         "agent",
         f"--agent={agent_id}",
         f"--session-key={session_key}",
-        f"--message={prompt}",
+        "--message",
+        message,
         "--json",
     ]
     if use_local:
@@ -139,17 +195,19 @@ def spawn_worker(
             stderr=stderr,
         )
 
-    detail = "Worker run finished"
-    if stdout:
-        try:
-            payload = json.loads(stdout)
-            payloads = payload.get("payloads") or []
-            if payloads and isinstance(payloads[0], dict):
-                text = payloads[0].get("text")
-                if text:
-                    detail = str(text).strip()[:500]
-        except json.JSONDecodeError:
-            detail = stdout[:500]
+    detail = extract_agent_reply(stdout)
+    if looks_like_deferred_reply(detail):
+        return WorkerRunResult(
+            task_id=task_id,
+            session_key=session_key,
+            status="failed",
+            detail=(
+                f"{detail} (Worker did not execute the brief; prompt kept at "
+                f"{prompt_path.relative_to(project_root).as_posix()})"
+            ),
+            stdout=stdout,
+            stderr=stderr,
+        )
 
     return WorkerRunResult(
         task_id=task_id,

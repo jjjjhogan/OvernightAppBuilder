@@ -60,7 +60,12 @@ def resolve_execution_mode(config: AppConfig) -> tuple[str, list[str]]:
     if requested == "openclaw":
         notes.append("[info] execution_mode=openclaw (will call `openclaw agent` for each task).")
     else:
-        notes.append("[info] execution_mode=queue (will write prompts under logs/worker-queue/).")
+        notes.append(
+            "[info] execution_mode=queue (writes prompts under logs/worker-queue/; does not run workers)."
+        )
+        notes.append(
+            "[info] Queue mode is for planning/orchestration labs. Use --mode openclaw to run workers automatically."
+        )
 
     return requested, notes
 
@@ -135,6 +140,7 @@ def run_tasks(
             agent_id=config.openclaw_agent_id,
             timeout_seconds=config.openclaw_timeout_seconds,
             use_local=config.openclaw_use_local,
+            queue_dir=queue_dir,
         )
 
         if result.status == "completed":

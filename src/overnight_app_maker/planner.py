@@ -69,19 +69,21 @@ def build_worker_prompt(
 ) -> str:
     instructions = _extract_worker_instructions_block(worker_instructions)
     goals_excerpt = "\n".join(goals.splitlines()[:40]).strip()
-    root = project_root.as_posix()
+    root = project_root.resolve().as_posix()
+    output_path = (project_root / task.output_dir).resolve().as_posix()
+    tasks_log_path = (project_root / "memory" / "tasks-log.md").resolve().as_posix()
     return (
         f"{instructions}\n\n"
         f"## Assigned Task\n"
         f"- ID: {task.id}\n"
         f"- Title: {task.title}\n"
         f"- Description: {task.description}\n"
-        f"- Output directory: {task.output_dir}/\n"
-        f"- Project root: {root}\n\n"
+        f"- Output directory (absolute): {output_path}/\n"
+        f"- Project root (absolute): {root}\n\n"
         f"## Goals Context\n"
         f"{goals_excerpt}\n\n"
         f"## Completion\n"
-        f"When finished, append this exact line to memory/tasks-log.md:\n"
+        f"When finished, append this exact line to {tasks_log_path}:\n"
         f"- {task.id}: {task.title}\n"
         f"Do not edit AUTONOMOUS.md or backlog/tasks.yml."
     )

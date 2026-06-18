@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
 import yaml
 
 from overnight_app_maker.backlog import ensure_backlog_task, load_backlog, merge_planned_tasks, next_task_id, update_task_status
@@ -232,6 +233,32 @@ def test_next_task_id(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert next_task_id(load_backlog(backlog)) == "TASK-010"
+
+
+def test_build_spawn_message_uses_prompt_file(tmp_path: Path) -> None:
+    from overnight_app_maker.openclaw_adapter import build_spawn_message
+
+    prompt_path = tmp_path / "logs" / "worker-queue" / "TASK-002.prompt.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("brief", encoding="utf-8")
+
+    message = build_spawn_message(prompt_path=prompt_path, project_root=tmp_path)
+    assert str(prompt_path.resolve().as_posix()) in message
+    assert str(tmp_path.resolve().as_posix()) in message
+
+
+def test_extract_agent_reply_reads_nested_payload() -> None:
+    from overnight_app_maker.openclaw_adapter import extract_agent_reply
+
+    stdout = json.dumps({"result": {"payloads": [{"text": "Finished report."}]}})
+    assert extract_agent_reply(stdout) == "Finished report."
+
+
+def test_looks_like_deferred_reply() -> None:
+    from overnight_app_maker.openclaw_adapter import looks_like_deferred_reply
+
+    assert looks_like_deferred_reply("Please provide the specific details of the task.")
+    assert not looks_like_deferred_reply("Wrote reports/TASK-002.md successfully.")
 
 
 def test_resolve_openclaw_executable_prefers_cmd_on_windows(monkeypatch) -> None:
