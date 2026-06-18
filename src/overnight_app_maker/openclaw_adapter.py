@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,8 +19,44 @@ class WorkerRunResult:
     stderr: str = ""
 
 
+def resolve_openclaw_executable() -> str | None:
+    """Return a subprocess-safe OpenClaw executable path."""
+    override = os.environ.get("OVERNIGHT_APP_MAKER_OPENCLAW", "").strip()
+    if override:
+        candidate = Path(override)
+        if candidate.exists():
+            return str(candidate.resolve())
+
+    for name in ("openclaw", "openclaw.cmd", "openclaw.exe"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
 def openclaw_available() -> bool:
-    return shutil.which("openclaw") is not None
+    return resolve_openclaw_executable() is not None
+
+
+def build_openclaw_command(*args: str) -> list[str]:
+    executable = resolve_openclaw_executable()
+    if not executable:
+        raise FileNotFoundError(
+            "OpenClaw CLI not found. Install with `npm install -g openclaw` and ensure it is on PATH."
+        )
+
+    if executable.lower().endswith(".ps1"):
+        return [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            executable,
+            *args,
+        ]
+
+    return [executable, *args]
 
 
 def build_session_key(agent_id: str, task_id: str) -> str:
@@ -36,8 +74,7 @@ def spawn_worker(
     use_local: bool = False,
 ) -> WorkerRunResult:
     session_key = build_session_key(agent_id, task_id)
-    command = [
-        "openclaw",
+    agent_args = [
         "agent",
         f"--agent={agent_id}",
         f"--session-key={session_key}",
@@ -45,7 +82,17 @@ def spawn_worker(
         "--json",
     ]
     if use_local:
-        command.insert(2, "--local")
+        agent_args.insert(1, "--local")
+
+    try:
+        command = build_openclaw_command(*agent_args)
+    except FileNotFoundError as exc:
+        return WorkerRunResult(
+            task_id=task_id,
+            session_key=session_key,
+            status="failed",
+            detail=str(exc),
+        )
 
     try:
         completed = subprocess.run(
@@ -55,6 +102,7 @@ def spawn_worker(
             text=True,
             timeout=timeout_seconds,
             check=False,
+            shell=False,
         )
     except subprocess.TimeoutExpired as exc:
         return WorkerRunResult(
@@ -66,11 +114,17 @@ def spawn_worker(
             stderr=exc.stderr or "",
         )
     except OSError as exc:
+        hint = ""
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 2:
+            hint = (
+                " On Windows, verify `where openclaw` works in the same terminal, "
+                "or set OVERNIGHT_APP_MAKER_OPENCLAW to the full path of openclaw.cmd."
+            )
         return WorkerRunResult(
             task_id=task_id,
             session_key=session_key,
             status="failed",
-            detail=str(exc),
+            detail=f"{exc}.{hint}",
         )
 
     stdout = completed.stdout.strip()

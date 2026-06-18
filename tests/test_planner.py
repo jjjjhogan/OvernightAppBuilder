@@ -232,3 +232,18 @@ def test_next_task_id(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert next_task_id(load_backlog(backlog)) == "TASK-010"
+
+
+def test_resolve_openclaw_executable_prefers_cmd_on_windows(monkeypatch) -> None:
+    from overnight_app_maker import openclaw_adapter
+
+    monkeypatch.setattr(openclaw_adapter.shutil, "which", lambda name: {
+        "openclaw": None,
+        "openclaw.cmd": r"C:\Users\garyj\AppData\Roaming\npm\openclaw.cmd",
+        "openclaw.exe": None,
+    }.get(name))
+    monkeypatch.delenv("OVERNIGHT_APP_MAKER_OPENCLAW", raising=False)
+
+    assert openclaw_adapter.resolve_openclaw_executable() == r"C:\Users\garyj\AppData\Roaming\npm\openclaw.cmd"
+    command = openclaw_adapter.build_openclaw_command("agent", "--message=test")
+    assert command[0] == r"C:\Users\garyj\AppData\Roaming\npm\openclaw.cmd"
