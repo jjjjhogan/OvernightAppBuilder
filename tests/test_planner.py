@@ -383,6 +383,13 @@ def test_looks_like_deferred_reply() -> None:
     assert not looks_like_deferred_reply("Wrote reports/TASK-002.md successfully.")
 
 
+def test_normalize_output_handles_none() -> None:
+    from overnight_app_maker.openclaw_adapter import _normalize_output
+
+    assert _normalize_output(None) == ""
+    assert _normalize_output("  ok  ") == "ok"
+
+
 def test_resolve_openclaw_executable_prefers_cmd_on_windows(monkeypatch) -> None:
     from overnight_app_maker import openclaw_adapter
 

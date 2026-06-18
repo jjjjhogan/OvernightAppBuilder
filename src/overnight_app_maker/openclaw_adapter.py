@@ -121,6 +121,10 @@ def looks_like_deferred_reply(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _normalize_output(value: str | None) -> str:
+    return (value or "").strip()
+
+
 def spawn_worker(
     *,
     task_id: str,
@@ -172,6 +176,8 @@ def spawn_worker(
             cwd=project_root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             check=False,
             shell=False,
@@ -182,8 +188,8 @@ def spawn_worker(
             session_key=session_key,
             status="timed_out",
             detail=f"OpenClaw worker exceeded {timeout_seconds}s",
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or "",
+            stdout=_normalize_output(exc.stdout if isinstance(exc.stdout, str) else None),
+            stderr=_normalize_output(exc.stderr if isinstance(exc.stderr, str) else None),
         )
     except OSError as exc:
         hint = ""
@@ -199,8 +205,8 @@ def spawn_worker(
             detail=f"{exc}.{hint}",
         )
 
-    stdout = completed.stdout.strip()
-    stderr = completed.stderr.strip()
+    stdout = _normalize_output(completed.stdout)
+    stderr = _normalize_output(completed.stderr)
     if completed.returncode != 0:
         return WorkerRunResult(
             task_id=task_id,
