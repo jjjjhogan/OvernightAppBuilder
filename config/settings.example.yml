@@ -6,7 +6,7 @@ goals:
   default_file: "goals/GOALS.example.md"
 
 execution:
-  default_mode: "dry-run"
+  default_mode: "queue"
   max_daily_tasks: 5
   allow_external_actions: false
 
