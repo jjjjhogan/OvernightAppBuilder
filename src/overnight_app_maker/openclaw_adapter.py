@@ -64,15 +64,21 @@ def build_session_key(agent_id: str, task_id: str) -> str:
     return f"overnight-{slug}"
 
 
-def build_spawn_message(*, prompt_path: Path, project_root: Path) -> str:
+MAX_INLINE_PROMPT_CHARS = 7000
+
+
+def resolve_spawn_message(*, prompt: str, prompt_path: Path, project_root: Path) -> str:
+    """Prefer inline brief text; use a file pointer only for very long prompts."""
+    if len(prompt) <= MAX_INLINE_PROMPT_CHARS:
+        return prompt
+
     brief_path = prompt_path.resolve().as_posix()
     root = project_root.resolve().as_posix()
     return (
-        "Read the worker task brief at this absolute path, then execute it exactly:\n"
-        f"{brief_path}\n\n"
-        f"Use project root {root} for all file paths.\n"
-        "Write artifacts only to the absolute output directory named in the brief.\n"
-        "Append the completion line to the absolute tasks-log path named in the brief."
+        "Use your read tool to open the worker task brief at the path on the next line, "
+        "then execute it exactly.\n\n"
+        f"BRIEF_PATH {brief_path}\n"
+        f"PROJECT_ROOT {root}\n"
     )
 
 
@@ -105,6 +111,12 @@ def looks_like_deferred_reply(text: str) -> bool:
         "provide the specific details",
         "need more information",
         "what task should",
+        "don't see an absolute path",
+        "dont see an absolute path",
+        "send me the worker task brief",
+        "worker task brief path",
+        "i'll read it and execute",
+        "ill read it and execute",
     )
     return any(marker in lowered for marker in markers)
 
@@ -127,7 +139,11 @@ def spawn_worker(
         queue_dir=queue_dir,
     )
     prompt_path = project_root / queue_dir / f"{task_id}.prompt.txt"
-    message = build_spawn_message(prompt_path=prompt_path, project_root=project_root)
+    message = resolve_spawn_message(
+        prompt=prompt,
+        prompt_path=prompt_path,
+        project_root=project_root,
+    )
 
     agent_args = [
         "agent",

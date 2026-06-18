@@ -235,16 +235,41 @@ def test_next_task_id(tmp_path: Path) -> None:
     assert next_task_id(load_backlog(backlog)) == "TASK-010"
 
 
+def test_resolve_spawn_message_prefers_inline_prompt(tmp_path: Path) -> None:
+    from overnight_app_maker.openclaw_adapter import resolve_spawn_message
+
+    prompt_path = tmp_path / "logs" / "worker-queue" / "TASK-001.prompt.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt = "Complete TASK-001 and write reports/output.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+
+    message = resolve_spawn_message(prompt=prompt, prompt_path=prompt_path, project_root=tmp_path)
+    assert message == prompt
+
+
+def test_resolve_spawn_message_file_fallback_avoids_drive_colon_label(tmp_path: Path) -> None:
+    from overnight_app_maker.openclaw_adapter import resolve_spawn_message
+
+    prompt_path = tmp_path / "logs" / "worker-queue" / "TASK-001.prompt.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt = "x" * 8000
+    prompt_path.write_text(prompt, encoding="utf-8")
+
+    message = resolve_spawn_message(prompt=prompt, prompt_path=prompt_path, project_root=tmp_path)
+    assert "BRIEF_PATH" in message
+    assert "absolute path, then execute" not in message
+
+
 def test_build_spawn_message_uses_prompt_file(tmp_path: Path) -> None:
-    from overnight_app_maker.openclaw_adapter import build_spawn_message
+    from overnight_app_maker.openclaw_adapter import resolve_spawn_message
 
     prompt_path = tmp_path / "logs" / "worker-queue" / "TASK-002.prompt.txt"
     prompt_path.parent.mkdir(parents=True)
-    prompt_path.write_text("brief", encoding="utf-8")
+    prompt = "brief"
+    prompt_path.write_text(prompt, encoding="utf-8")
 
-    message = build_spawn_message(prompt_path=prompt_path, project_root=tmp_path)
-    assert str(prompt_path.resolve().as_posix()) in message
-    assert str(tmp_path.resolve().as_posix()) in message
+    message = resolve_spawn_message(prompt=prompt, prompt_path=prompt_path, project_root=tmp_path)
+    assert message == "brief"
 
 
 def test_extract_agent_reply_reads_nested_payload() -> None:
@@ -258,6 +283,7 @@ def test_looks_like_deferred_reply() -> None:
     from overnight_app_maker.openclaw_adapter import looks_like_deferred_reply
 
     assert looks_like_deferred_reply("Please provide the specific details of the task.")
+    assert looks_like_deferred_reply("I don't see an absolute path after the colon.")
     assert not looks_like_deferred_reply("Wrote reports/TASK-002.md successfully.")
 
 
