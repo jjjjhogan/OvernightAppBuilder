@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .backlog import update_task_status
+from .backlog import ensure_backlog_task, update_task_status
 from .config import AppConfig
 from .openclaw_adapter import openclaw_available, queue_worker_prompt, spawn_worker
 from .models import PlannedTask
@@ -43,27 +43,66 @@ def _resolve_worker_prompt(
     )
 
 
+def resolve_execution_mode(config: AppConfig) -> tuple[str, list[str]]:
+    """Return the effective execution mode and any advisory notes."""
+    notes: list[str] = []
+    requested = config.execution_mode.strip().lower()
+    if requested not in {"openclaw", "queue"}:
+        notes.append(
+            f"[info] Unknown execution mode '{config.execution_mode}'; using openclaw when available, otherwise queue."
+        )
+        requested = "openclaw"
+
+    if requested == "openclaw" and not openclaw_available():
+        notes.append("[info] openclaw CLI not found on PATH; falling back to queue mode.")
+        return "queue", notes
+
+    if requested == "openclaw":
+        notes.append("[info] execution_mode=openclaw (will call `openclaw agent` for each task).")
+    else:
+        notes.append("[info] execution_mode=queue (will write prompts under logs/worker-queue/).")
+
+    return requested, notes
+
+
 def run_tasks(
     tasks: list[PlannedTask],
     *,
     config: AppConfig,
     goals: str,
     dry_run: bool = False,
+    write_backlog: bool = True,
 ) -> list[str]:
     """Execute or queue planned tasks and return human-readable status lines."""
     if dry_run:
         return [f"[dry-run] {task.id}: {task.title} -> {task.output_dir}/" for task in tasks]
 
+    if not tasks:
+        return [
+            "[info] No new tasks to run.",
+            "[info] The planner skipped everything already open or completed in backlog/tasks.yml.",
+            "[info] Add new goal bullets, mark stale tasks done, or use a fresh goals file.",
+        ]
+
+    execution_mode, notes = resolve_execution_mode(config)
+    status_lines = list(notes)
     _ensure_output_dirs(config.project_root, config.output_dirs)
     worker_instructions = _load_worker_instructions(config.worker_instructions_file)
-    execution_mode = config.execution_mode if config.execution_mode in {"openclaw", "queue"} else "openclaw"
-    if execution_mode == "openclaw" and not openclaw_available():
-        execution_mode = "queue"
+    queue_dir = config.output_dirs[-1] + "/worker-queue"
 
-    status_lines: list[str] = []
     for task in tasks:
+        backlog_id = task.id
+        if write_backlog:
+            backlog_id = ensure_backlog_task(config.backlog_file, task)
+
         prompt = _resolve_worker_prompt(
-            task=task,
+            task=PlannedTask(
+                id=backlog_id,
+                title=task.title,
+                description=task.description,
+                output_dir=task.output_dir,
+                worker_prompt=task.worker_prompt,
+            ),
             goals=goals,
             worker_instructions=worker_instructions,
             project_root=config.project_root,
@@ -71,24 +110,26 @@ def run_tasks(
         output_path = config.project_root / task.output_dir
         output_path.mkdir(parents=True, exist_ok=True)
 
-        update_task_status(config.backlog_file, task.id, "queued")
-        status_lines.append(f"[queued] {task.id}: {task.title} -> {task.output_dir}/")
+        if not update_task_status(config.backlog_file, backlog_id, "queued"):
+            status_lines.append(f"[warn] {backlog_id}: could not update backlog status to queued.")
+        status_lines.append(f"[queued] {backlog_id}: {task.title} -> {task.output_dir}/")
 
-        if execution_mode == "queue" or not openclaw_available():
+        if execution_mode == "queue":
             result = queue_worker_prompt(
-                task_id=task.id,
+                task_id=backlog_id,
                 prompt=prompt,
                 project_root=config.project_root,
-                queue_dir=config.output_dirs[-1] + "/worker-queue",
+                queue_dir=queue_dir,
             )
-            status_lines.append(f"[{result.status}] {task.id}: {result.detail}")
+            status_lines.append(f"[{result.status}] {backlog_id}: {result.detail}")
             continue
 
-        update_task_status(config.backlog_file, task.id, "running")
-        status_lines.append(f"[running] {task.id}: {task.title}")
+        if not update_task_status(config.backlog_file, backlog_id, "running"):
+            status_lines.append(f"[warn] {backlog_id}: could not update backlog status to running.")
+        status_lines.append(f"[running] {backlog_id}: {task.title}")
 
         result = spawn_worker(
-            task_id=task.id,
+            task_id=backlog_id,
             prompt=prompt,
             project_root=config.project_root,
             agent_id=config.openclaw_agent_id,
@@ -97,11 +138,22 @@ def run_tasks(
         )
 
         if result.status == "completed":
-            update_task_status(config.backlog_file, task.id, "done")
-            append_completion(config.tasks_log_file, task.id, task.title)
-            status_lines.append(f"[completed] {task.id}: {result.detail}")
-        else:
-            update_task_status(config.backlog_file, task.id, "failed")
-            status_lines.append(f"[{result.status}] {task.id}: {result.detail}")
+            update_task_status(config.backlog_file, backlog_id, "done")
+            append_completion(config.tasks_log_file, backlog_id, task.title)
+            status_lines.append(f"[completed] {backlog_id}: {result.detail}")
+            continue
+
+        update_task_status(config.backlog_file, backlog_id, "failed")
+        status_lines.append(f"[{result.status}] {backlog_id}: {result.detail}")
+        fallback = queue_worker_prompt(
+            task_id=backlog_id,
+            prompt=prompt,
+            project_root=config.project_root,
+            queue_dir=queue_dir,
+        )
+        status_lines.append(
+            f"[queued] {backlog_id}: OpenClaw failed; prompt saved to "
+            f"{fallback.detail.rsplit(' ', 1)[-1]}"
+        )
 
     return status_lines

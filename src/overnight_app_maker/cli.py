@@ -27,6 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip writing newly planned tasks to backlog/tasks.yml.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["queue", "openclaw"],
+        help="Execution mode override (queue writes prompt files; openclaw runs workers).",
+    )
     return parser
 
 
@@ -39,6 +44,11 @@ def main() -> None:
     config = load_config(project_root=project_root, config_path=config_path, goals_override=goals_override)
     if args.max_tasks is not None:
         config = replace(config, max_daily_tasks=args.max_tasks)
+    if args.mode is not None:
+        config = replace(config, execution_mode=args.mode)
+
+    print(f"[info] project_root={config.project_root}")
+    print(f"[info] goals_file={config.goals_file}")
 
     goals = load_goals(config.goals_file)
     worker_instructions = ""
@@ -54,14 +64,19 @@ def main() -> None:
         project_root=config.project_root,
     )
 
+    print(f"[info] planned {len(tasks)} task(s).")
+
     if not args.dry_run and not args.no_write_backlog:
-        merge_planned_tasks(config.backlog_file, tasks)
+        added = merge_planned_tasks(config.backlog_file, tasks)
+        if added:
+            print(f"[info] added {len(added)} task(s) to {config.backlog_file}.")
 
     lines = run_tasks(
         tasks,
         config=config,
         goals=goals,
         dry_run=args.dry_run,
+        write_backlog=not args.no_write_backlog,
     )
     for line in lines:
         print(line)

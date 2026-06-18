@@ -86,7 +86,7 @@ def load_config(
         ),
         execution_mode=os.environ.get(
             "OVERNIGHT_APP_MAKER_MODE",
-            execution_cfg.get("default_mode", "dry-run"),
+            execution_cfg.get("default_mode", "queue"),
         ),
         openclaw_agent_id=os.environ.get("OVERNIGHT_APP_MAKER_OPENCLAW_AGENT", "main"),
         openclaw_timeout_seconds=_env_int("OVERNIGHT_APP_MAKER_OPENCLAW_TIMEOUT", 600),

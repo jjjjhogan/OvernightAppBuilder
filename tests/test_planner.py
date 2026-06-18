@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from overnight_app_maker.backlog import load_backlog, merge_planned_tasks, next_task_id, update_task_status
+from overnight_app_maker.backlog import ensure_backlog_task, load_backlog, merge_planned_tasks, next_task_id, update_task_status
 from overnight_app_maker.models import PlannedTask
 from overnight_app_maker.planner import build_worker_prompt, plan_daily_tasks
 from overnight_app_maker.runner import run_tasks
@@ -128,6 +128,41 @@ def test_update_task_status(tmp_path: Path) -> None:
     assert tasks[0]["status"] == "running"
 
 
+def test_update_task_status_normalizes_in_progress(tmp_path: Path) -> None:
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text(
+        yaml.safe_dump({"tasks": [{"id": "TASK-001", "title": "One", "status": "todo"}]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    update_task_status(backlog, "TASK-001", "in progress")
+    tasks = load_backlog(backlog)
+    assert tasks[0]["status"] == "in_progress"
+
+
+def test_ensure_backlog_task_reuses_existing_title(tmp_path: Path) -> None:
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text(
+        yaml.safe_dump(
+            {"tasks": [{"id": "TASK-004", "title": "Existing title", "status": "in progress"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    planned = PlannedTask(
+        id="TASK-009",
+        title="Existing title",
+        description="Same work",
+        output_dir="reports",
+    )
+
+    resolved_id = ensure_backlog_task(backlog, planned)
+    assert resolved_id == "TASK-004"
+    assert len(load_backlog(backlog)) == 1
+
+
 def test_append_completion_adds_dated_line(tmp_path: Path) -> None:
     tasks_log = tmp_path / "memory" / "tasks-log.md"
     append_completion(tasks_log, "TASK-007", "Write summary")
@@ -167,6 +202,27 @@ def test_runner_dry_run_does_not_touch_backlog(tmp_path: Path) -> None:
     lines = run_tasks(tasks, config=config, goals="# Goals", dry_run=True)
     assert lines == ["[dry-run] TASK-001: Dry run task -> reports/"]
     assert load_backlog(backlog) == []
+
+
+def test_runner_reports_when_no_tasks_planned(tmp_path: Path) -> None:
+    from overnight_app_maker.config import AppConfig
+
+    config = AppConfig(
+        project_root=tmp_path,
+        goals_file=tmp_path / "goals.md",
+        backlog_file=tmp_path / "backlog" / "tasks.yml",
+        tasks_log_file=tmp_path / "memory" / "tasks-log.md",
+        worker_instructions_file=tmp_path / "docs" / "worker-instructions.md",
+        max_daily_tasks=5,
+        execution_mode="queue",
+        openclaw_agent_id="main",
+        openclaw_timeout_seconds=30,
+        openclaw_use_local=False,
+        output_dirs=("apps", "research", "reports", "logs"),
+    )
+
+    lines = run_tasks([], config=config, goals="# Goals", dry_run=False)
+    assert any("No new tasks to run" in line for line in lines)
 
 
 def test_next_task_id(tmp_path: Path) -> None:

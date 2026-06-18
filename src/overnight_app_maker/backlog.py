@@ -11,6 +11,24 @@ from .models import PlannedTask
 
 TASK_ID_PATTERN = re.compile(r"^TASK-(\d+)$", re.IGNORECASE)
 OPEN_STATUSES = {"todo", "in_progress", "queued", "running"}
+STATUS_ALIASES = {
+    "in progress": "in_progress",
+    "in-progress": "in_progress",
+    "inprogress": "in_progress",
+    "to do": "todo",
+    "to-do": "todo",
+    "done": "done",
+    "complete": "done",
+    "completed": "done",
+    "failed": "failed",
+    "error": "failed",
+}
+
+
+def normalize_status(status: str) -> str:
+    cleaned = status.strip().lower().replace("_", " ")
+    cleaned = " ".join(cleaned.split())
+    return STATUS_ALIASES.get(cleaned, cleaned.replace(" ", "_"))
 
 
 def _ensure_parent(path: Path) -> None:
@@ -54,7 +72,7 @@ def open_backlog_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         task
         for task in tasks
-        if str(task.get("status", "todo")).lower() in OPEN_STATUSES
+        if normalize_status(str(task.get("status", "todo"))) in OPEN_STATUSES
     ]
 
 
@@ -104,13 +122,31 @@ def merge_planned_tasks(path: Path, planned: list[PlannedTask], *, owner: str = 
     return added
 
 
-def update_task_status(path: Path, task_id: str, status: str) -> None:
+def ensure_backlog_task(path: Path, task: PlannedTask, *, owner: str = "main") -> str:
+    """Ensure the task exists in backlog and return the id to use for updates."""
     tasks = load_backlog(path)
+    normalized_title = task.title.strip().lower()
+
+    for existing in tasks:
+        if str(existing.get("id")) == task.id:
+            return task.id
+        if str(existing.get("title", "")).strip().lower() == normalized_title:
+            return str(existing["id"])
+
+    tasks.append(backlog_entry_from_planned(task, owner=owner))
+    save_backlog(path, tasks)
+    return task.id
+
+
+def update_task_status(path: Path, task_id: str, status: str) -> bool:
+    tasks = load_backlog(path)
+    normalized_status = normalize_status(status)
     updated = False
     for task in tasks:
         if str(task.get("id")) == task_id:
-            task["status"] = status
+            task["status"] = normalized_status
             updated = True
             break
     if updated:
         save_backlog(path, tasks)
+    return updated
