@@ -95,6 +95,7 @@ def backlog_entry_from_planned(task: PlannedTask, *, owner: str = "main") -> dic
         "status": "todo",
         "owner": owner,
         "artifact": f"{task.output_dir}/",
+        "phase": task.phase,
         "created_at": date.today().isoformat(),
     }
     if task.worker_prompt:

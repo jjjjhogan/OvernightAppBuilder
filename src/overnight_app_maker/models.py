@@ -10,3 +10,4 @@ class PlannedTask:
     description: str
     output_dir: str
     worker_prompt: str = ""
+    phase: str = "plan"  # "plan" | "build"

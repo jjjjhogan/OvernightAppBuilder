@@ -6,7 +6,7 @@ from .backlog import ensure_backlog_task, update_task_status
 from .config import AppConfig
 from .openclaw_adapter import openclaw_available, queue_worker_prompt, spawn_worker
 from .models import PlannedTask
-from .planner import build_worker_prompt
+from .planner import build_worker_prompt, _find_latest_planning_artifact
 from .tasks_log import append_completion
 
 
@@ -35,11 +35,13 @@ def _resolve_worker_prompt(
 ) -> str:
     if task.worker_prompt.strip():
         return task.worker_prompt
+    artifact = _find_latest_planning_artifact(project_root) if task.phase == "build" else None
     return build_worker_prompt(
         task=task,
         goals=goals,
         worker_instructions=worker_instructions,
         project_root=project_root,
+        planning_artifact=artifact,
     )
 
 
@@ -107,6 +109,7 @@ def run_tasks(
                 description=task.description,
                 output_dir=task.output_dir,
                 worker_prompt=task.worker_prompt,
+                phase=task.phase,
             ),
             goals=goals,
             worker_instructions=worker_instructions,
@@ -115,8 +118,9 @@ def run_tasks(
         output_path = config.project_root / task.output_dir
         output_path.mkdir(parents=True, exist_ok=True)
 
-        if not update_task_status(config.backlog_file, backlog_id, "queued"):
-            status_lines.append(f"[warn] {backlog_id}: could not update backlog status to queued.")
+        if write_backlog:
+            if not update_task_status(config.backlog_file, backlog_id, "queued"):
+                status_lines.append(f"[warn] {backlog_id}: could not update backlog status to queued.")
         status_lines.append(f"[queued] {backlog_id}: {task.title} -> {task.output_dir}/")
 
         if execution_mode == "queue":
@@ -129,8 +133,9 @@ def run_tasks(
             status_lines.append(f"[{result.status}] {backlog_id}: {result.detail}")
             continue
 
-        if not update_task_status(config.backlog_file, backlog_id, "running"):
-            status_lines.append(f"[warn] {backlog_id}: could not update backlog status to running.")
+        if write_backlog:
+            if not update_task_status(config.backlog_file, backlog_id, "running"):
+                status_lines.append(f"[warn] {backlog_id}: could not update backlog status to running.")
         status_lines.append(f"[running] {backlog_id}: {task.title}")
 
         result = spawn_worker(
@@ -144,12 +149,14 @@ def run_tasks(
         )
 
         if result.status == "completed":
-            update_task_status(config.backlog_file, backlog_id, "done")
+            if write_backlog:
+                update_task_status(config.backlog_file, backlog_id, "done")
             append_completion(config.tasks_log_file, backlog_id, task.title)
             status_lines.append(f"[completed] {backlog_id}: {result.detail}")
             continue
 
-        update_task_status(config.backlog_file, backlog_id, "failed")
+        if write_backlog:
+            update_task_status(config.backlog_file, backlog_id, "failed")
         status_lines.append(f"[{result.status}] {backlog_id}: {result.detail}")
         fallback = queue_worker_prompt(
             task_id=backlog_id,

@@ -95,6 +95,66 @@ def test_build_worker_prompt_includes_task_and_rules(tmp_path: Path) -> None:
     assert "memory/tasks-log.md" in prompt
 
 
+def test_build_worker_prompt_includes_web_app_requirements(tmp_path: Path) -> None:
+    brief = tmp_path / "reports" / "TASK-005-implementation-brief.md"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("# Brief\n", encoding="utf-8")
+    task = PlannedTask(
+        id="TASK-006",
+        title="Build minimal web app from latest planning brief",
+        description="Implement the brief.",
+        output_dir="apps",
+        phase="build",
+    )
+    prompt = build_worker_prompt(
+        task=task,
+        goals="# Goals",
+        worker_instructions="Follow the brief.",
+        project_root=tmp_path,
+        planning_artifact=brief,
+    )
+
+    assert "index.html" in prompt
+    assert "Build Requirements" in prompt
+    assert brief.name in prompt
+
+
+def test_plan_daily_tasks_includes_build_after_planning_artifacts(tmp_path: Path) -> None:
+    brief = tmp_path / "reports" / "TASK-005-implementation-brief.md"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("# Brief\n", encoding="utf-8")
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text("tasks: []\n", encoding="utf-8")
+
+    tasks = plan_daily_tasks(
+        "# Goals\n\n## Overnight App Ideas\n\n- Habit tracker for students.\n",
+        max_tasks=4,
+        backlog_path=backlog,
+        project_root=tmp_path,
+    )
+
+    phases = [task.phase for task in tasks]
+    assert "plan" in phases
+    assert "build" in phases
+    assert phases.index("plan") < phases.index("build")
+
+
+def test_plan_daily_tasks_no_build_without_planning_artifacts(tmp_path: Path) -> None:
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text("tasks: []\n", encoding="utf-8")
+
+    tasks = plan_daily_tasks(
+        "# Goals\n\n## Overnight App Ideas\n\n- Habit tracker for students.\n",
+        max_tasks=4,
+        backlog_path=backlog,
+        project_root=tmp_path,
+    )
+
+    assert all(task.phase == "plan" for task in tasks)
+
+
 def test_merge_planned_tasks_appends_without_duplicates(tmp_path: Path) -> None:
     backlog = tmp_path / "backlog" / "tasks.yml"
     backlog.parent.mkdir(parents=True)
@@ -203,6 +263,42 @@ def test_runner_dry_run_does_not_touch_backlog(tmp_path: Path) -> None:
     lines = run_tasks(tasks, config=config, goals="# Goals", dry_run=True)
     assert lines == ["[dry-run] TASK-001: Dry run task -> reports/"]
     assert load_backlog(backlog) == []
+
+
+def test_runner_no_write_backlog_skips_backlog_status_updates(tmp_path: Path) -> None:
+    from overnight_app_maker.config import AppConfig
+
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text("tasks: []\n", encoding="utf-8")
+    config = AppConfig(
+        project_root=tmp_path,
+        goals_file=tmp_path / "goals.md",
+        backlog_file=backlog,
+        tasks_log_file=tmp_path / "memory" / "tasks-log.md",
+        worker_instructions_file=tmp_path / "docs" / "worker-instructions.md",
+        max_daily_tasks=5,
+        execution_mode="queue",
+        openclaw_agent_id="main",
+        openclaw_timeout_seconds=30,
+        openclaw_use_local=False,
+        output_dirs=("apps", "research", "reports", "logs"),
+    )
+    tasks = [
+        PlannedTask(
+            id="TASK-001",
+            title="Queue without backlog writes",
+            description="Only queue prompt",
+            output_dir="reports",
+        )
+    ]
+
+    lines = run_tasks(tasks, config=config, goals="# Goals", write_backlog=False)
+
+    assert load_backlog(backlog) == []
+    assert not any("[warn]" in line for line in lines)
+    assert any("[queued] TASK-001:" in line for line in lines)
+    assert (tmp_path / "logs" / "worker-queue" / "TASK-001.prompt.txt").exists()
 
 
 def test_runner_reports_when_no_tasks_planned(tmp_path: Path) -> None:
