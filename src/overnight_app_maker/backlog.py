@@ -106,14 +106,17 @@ def backlog_entry_from_planned(task: PlannedTask, *, owner: str = "main") -> dic
 def merge_planned_tasks(path: Path, planned: list[PlannedTask], *, owner: str = "main") -> list[PlannedTask]:
     existing = load_backlog(path)
     existing_ids = {str(task.get("id")) for task in existing}
-    existing_titles = {str(task.get("title", "")).strip().lower() for task in existing}
+    open_titles = {
+        str(task.get("title", "")).strip().lower()
+        for task in open_backlog_tasks(existing)
+    }
 
     merged = list(existing)
     added: list[PlannedTask] = []
     for task in planned:
         if task.id in existing_ids:
             continue
-        if task.title.strip().lower() in existing_titles:
+        if task.title.strip().lower() in open_titles:
             continue
         merged.append(backlog_entry_from_planned(task, owner=owner))
         added.append(task)
@@ -131,6 +134,8 @@ def ensure_backlog_task(path: Path, task: PlannedTask, *, owner: str = "main") -
     for existing in tasks:
         if str(existing.get("id")) == task.id:
             return task.id
+
+    for existing in open_backlog_tasks(tasks):
         if str(existing.get("title", "")).strip().lower() == normalized_title:
             return str(existing["id"])
 

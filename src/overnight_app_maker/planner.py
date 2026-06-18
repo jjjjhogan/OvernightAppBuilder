@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .backlog import load_backlog, next_task_id, open_backlog_tasks
 from .models import PlannedTask
-from .tasks_log import is_recently_completed, load_tasks_log
+from .tasks_log import extract_completed_summaries, is_recently_completed, load_tasks_log
 
 GOAL_BULLET = re.compile(r"^\s*-\s+(.+)$")
 PLANNING_SECTIONS = {
@@ -241,11 +241,12 @@ def _append_candidate(
     phase: str,
     tasks_log: str,
     open_tasks: list[dict],
+    allow_repeat: bool = False,
 ) -> bool:
     normalized = title.strip().lower()
     if normalized in seen_titles:
         return False
-    if is_recently_completed(title, tasks_log):
+    if not allow_repeat and is_recently_completed(title, tasks_log):
         return False
     if _is_duplicate_open_task(title, open_tasks):
         return False
@@ -262,6 +263,45 @@ def _append_candidate(
     return True
 
 
+def explain_planning_blockers(
+    goals: str,
+    *,
+    tasks_log_path: Path | None = None,
+    backlog_path: Path | None = None,
+    project_root: Path | None = None,
+) -> list[str]:
+    """Return human-readable reasons why planning may return zero tasks."""
+    root = (project_root or Path.cwd()).resolve()
+    tasks_log = load_tasks_log(tasks_log_path) if tasks_log_path else ""
+    backlog = load_backlog(backlog_path) if backlog_path else []
+    open_tasks = open_backlog_tasks(backlog)
+    goal_bullets = _parse_goal_bullets(goals)
+
+    lines = [
+        f"[info] open backlog task(s): {len(open_tasks)}",
+        f"[info] completed task log line(s): {len(extract_completed_summaries(tasks_log))}",
+        f"[info] goal bullet(s) eligible for planning: {len(goal_bullets)}",
+    ]
+    if len(goal_bullets) == 0:
+        lines.append(
+            "[info] No eligible goal bullets found. Add bullets under Career/Personal/Business/"
+            "Automation Targets/Overnight App Ideas without an Example: prefix."
+        )
+    if len(open_tasks) > 0:
+        lines.append("[info] Open backlog titles blocking replans:")
+        for task in open_tasks[:5]:
+            lines.append(f"[info]   - {task.get('id')}: {task.get('title')} ({task.get('status')})")
+    if extract_completed_summaries(tasks_log):
+        lines.append(
+            "[info] memory/tasks-log.md blocks repeat titles. Add new goal bullets or use --allow-repeat."
+        )
+    if _find_latest_planning_artifact(root):
+        lines.append("[info] Planning brief(s) exist in reports/ or research/ (build tasks can be scheduled).")
+    else:
+        lines.append("[info] No reports/*.md or research/*.md yet (build tasks wait for a planning brief).")
+    return lines
+
+
 def plan_daily_tasks(
     goals: str,
     *,
@@ -270,6 +310,7 @@ def plan_daily_tasks(
     backlog_path: Path | None = None,
     worker_instructions: str = "",
     project_root: Path | None = None,
+    allow_repeat: bool = False,
 ) -> list[PlannedTask]:
     """Plan daily tasks: planning artifacts first, then optional web-app build tasks."""
     root = (project_root or Path.cwd()).resolve()
@@ -294,6 +335,7 @@ def plan_daily_tasks(
             phase="plan",
             tasks_log=tasks_log,
             open_tasks=open_tasks,
+            allow_repeat=allow_repeat,
         )
         if has_planning and section in BUILD_GOAL_SECTIONS and planning_artifact is not None:
             build_title, build_description, build_output = _build_proposal_from_goal(
@@ -310,6 +352,7 @@ def plan_daily_tasks(
                 phase="build",
                 tasks_log=tasks_log,
                 open_tasks=open_tasks,
+                allow_repeat=allow_repeat,
             )
 
     for title, output_dir, description in PLANNING_FALLBACK_TASKS:
@@ -322,6 +365,7 @@ def plan_daily_tasks(
             phase="plan",
             tasks_log=tasks_log,
             open_tasks=open_tasks,
+            allow_repeat=allow_repeat,
         )
 
     if has_planning and planning_artifact is not None:
@@ -335,6 +379,7 @@ def plan_daily_tasks(
                 phase="build",
                 tasks_log=tasks_log,
                 open_tasks=open_tasks,
+                allow_repeat=allow_repeat,
             )
 
     # Reserve at least one build slot when planning artifacts exist and max_tasks > 1.

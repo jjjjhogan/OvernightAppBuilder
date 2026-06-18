@@ -87,8 +87,8 @@ def run_tasks(
     if not tasks:
         return [
             "[info] No new tasks to run.",
-            "[info] The planner skipped everything already open or completed in backlog/tasks.yml.",
-            "[info] Add new goal bullets, mark stale tasks done, or use a fresh goals file.",
+            "[info] See diagnostics above for open backlog items and memory/tasks-log.md history.",
+            "[info] Add new goal bullets, mark open backlog tasks done, or use --allow-repeat.",
         ]
 
     execution_mode, notes = resolve_execution_mode(config)

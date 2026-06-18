@@ -7,7 +7,7 @@ from pathlib import Path
 from .backlog import merge_planned_tasks
 from .config import load_config
 from .goals import load_goals
-from .planner import plan_daily_tasks
+from .planner import explain_planning_blockers, plan_daily_tasks
 from .runner import run_tasks
 
 
@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["queue", "openclaw"],
         help="Execution mode override (queue writes prompt files; openclaw runs workers).",
+    )
+    parser.add_argument(
+        "--allow-repeat",
+        action="store_true",
+        help="Allow replanning task titles already listed in memory/tasks-log.md.",
     )
     return parser
 
@@ -62,9 +67,18 @@ def main() -> None:
         backlog_path=config.backlog_file,
         worker_instructions=worker_instructions,
         project_root=config.project_root,
+        allow_repeat=args.allow_repeat,
     )
 
     print(f"[info] planned {len(tasks)} task(s).")
+    if len(tasks) == 0:
+        for line in explain_planning_blockers(
+            goals,
+            tasks_log_path=config.tasks_log_file,
+            backlog_path=config.backlog_file,
+            project_root=config.project_root,
+        ):
+            print(line)
 
     if not args.dry_run and not args.no_write_backlog:
         added = merge_planned_tasks(config.backlog_file, tasks)

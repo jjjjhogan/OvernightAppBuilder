@@ -176,6 +176,64 @@ def test_merge_planned_tasks_appends_without_duplicates(tmp_path: Path) -> None:
     assert len(load_backlog(backlog)) == 1
 
 
+def test_merge_planned_tasks_allows_repeat_after_done(tmp_path: Path) -> None:
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text(
+        yaml.safe_dump(
+            {"tasks": [{"id": "TASK-001", "title": "First task", "status": "done"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    planned = [
+        PlannedTask(
+            id="TASK-002",
+            title="First task",
+            description="Do one thing again",
+            output_dir="reports",
+        )
+    ]
+
+    added = merge_planned_tasks(backlog, planned)
+    assert len(added) == 1
+    assert len(load_backlog(backlog)) == 2
+
+
+def test_plan_daily_tasks_allow_repeat_ignores_tasks_log(tmp_path: Path) -> None:
+    tasks_log = tmp_path / "memory" / "tasks-log.md"
+    tasks_log.parent.mkdir(parents=True)
+    tasks_log.write_text(
+        "# Completed Tasks\n\n## 2026-06-18\n\n"
+        "- TASK-001: Research one opportunity from the goals file\n",
+        encoding="utf-8",
+    )
+    backlog = tmp_path / "backlog" / "tasks.yml"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text("tasks: []\n", encoding="utf-8")
+
+    blocked = plan_daily_tasks(
+        "# Goals\n\n## Career\n\n- Example: ignored.\n",
+        max_tasks=1,
+        tasks_log_path=tasks_log,
+        backlog_path=backlog,
+        project_root=tmp_path,
+        allow_repeat=False,
+    )
+    allowed = plan_daily_tasks(
+        "# Goals\n\n## Career\n\n- Example: ignored.\n",
+        max_tasks=1,
+        tasks_log_path=tasks_log,
+        backlog_path=backlog,
+        project_root=tmp_path,
+        allow_repeat=True,
+    )
+
+    assert all(task.title != "Research one opportunity from the goals file" for task in blocked)
+    assert len(allowed) == 1
+    assert allowed[0].title == "Research one opportunity from the goals file"
+
+
 def test_update_task_status(tmp_path: Path) -> None:
     backlog = tmp_path / "backlog" / "tasks.yml"
     backlog.parent.mkdir(parents=True)
