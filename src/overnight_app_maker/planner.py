@@ -154,6 +154,46 @@ def _parse_goal_bullets(goals: str) -> list[tuple[str, str]]:
     return bullets
 
 
+def diagnose_goals(goals: str) -> dict[str, object]:
+    """Return parsing diagnostics to help students fix goals formatting."""
+    bullets = _parse_goal_bullets(goals)
+    ignored_in_planning_sections: list[dict[str, str]] = []
+    current_section = "general"
+
+    for line in goals.splitlines():
+        stripped = line.strip()
+        heading = re.match(r"^##\s+(.+)$", stripped)
+        if heading:
+            current_section = heading.group(1).strip().lower()
+            continue
+        if current_section not in PLANNING_SECTIONS:
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        if GOAL_BULLET.match(line):
+            continue
+        if stripped.lower().startswith("example:") or stripped.lower().startswith("example "):
+            continue
+        ignored_in_planning_sections.append({"section": current_section, "line": stripped})
+
+    hints: list[str] = []
+    if not bullets:
+        hints.append("Add goals as markdown bullets, e.g. `- eat healthier` under ## Personal.")
+    if ignored_in_planning_sections:
+        hints.append(
+            f"{len(ignored_in_planning_sections)} line(s) in planning sections are not bullet format "
+            "(must start with `- `)."
+        )
+    hints.append("Lines starting with `Example:` are ignored — replace them with your real goals.")
+
+    return {
+        "eligible_bullets": [{"section": section, "text": text} for section, text in bullets],
+        "eligible_count": len(bullets),
+        "ignored_lines": ignored_in_planning_sections,
+        "hints": hints,
+    }
+
+
 def _short_goal(goal_text: str) -> str:
     return goal_text if len(goal_text) <= 72 else goal_text[:69] + "..."
 

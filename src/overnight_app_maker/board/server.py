@@ -18,6 +18,7 @@ from ..task_manager import (
     cancel_task,
     complete_task,
     delete_task_entry,
+    diagnose_planning_readiness,
     plan_tasks_for_board,
     preview_task_prompt,
     queue_task,
@@ -149,6 +150,15 @@ class BoardHandler(BaseHTTPRequestHandler):
                 self.config,
                 goals_content=body.get("goals_content"),
                 allow_repeat=bool(body.get("allow_repeat", False)),
+            )
+            if not result.get("ok"):
+                return self._send_json(HTTPStatus.BAD_REQUEST, result)
+            return self._send_json(HTTPStatus.OK, result)
+
+        if path == "/api/plan/diagnose":
+            result = diagnose_planning_readiness(
+                self.config,
+                goals_content=body.get("goals_content"),
             )
             if not result.get("ok"):
                 return self._send_json(HTTPStatus.BAD_REQUEST, result)

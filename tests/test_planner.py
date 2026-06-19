@@ -200,6 +200,17 @@ def test_merge_planned_tasks_allows_repeat_after_done(tmp_path: Path) -> None:
     assert len(load_backlog(backlog)) == 2
 
 
+def test_diagnose_goals_flags_non_bullet_lines() -> None:
+    from overnight_app_maker.planner import diagnose_goals
+
+    goals = "## Personal\n\neat healthier\n\n- Learn guitar\n"
+    diagnosis = diagnose_goals(goals)
+    assert diagnosis["eligible_count"] == 1
+    assert diagnosis["eligible_bullets"][0]["text"] == "Learn guitar"
+    assert len(diagnosis["ignored_lines"]) == 1
+    assert diagnosis["ignored_lines"][0]["line"] == "eat healthier"
+
+
 def test_plan_daily_tasks_allow_repeat_ignores_tasks_log(tmp_path: Path) -> None:
     tasks_log = tmp_path / "memory" / "tasks-log.md"
     tasks_log.parent.mkdir(parents=True)

@@ -9,18 +9,25 @@ from .backlog import (
     get_task,
     kanban_column,
     load_backlog,
+    merge_planned_tasks,
     normalize_status,
+    open_backlog_tasks,
     planned_task_from_backlog,
     update_task_fields,
     update_task_status,
 )
-from .backlog import merge_planned_tasks
 from .config import AppConfig
 from .goals import goals_view, load_goals, save_goals
 from .models import PlannedTask
 from .openclaw_adapter import queue_worker_prompt
-from .planner import _find_latest_planning_artifact, build_worker_prompt, explain_planning_blockers, plan_daily_tasks
-from .tasks_log import append_completion
+from .planner import (
+    _find_latest_planning_artifact,
+    build_worker_prompt,
+    diagnose_goals,
+    explain_planning_blockers,
+    plan_daily_tasks,
+)
+from .tasks_log import append_completion, extract_completed_summaries, load_tasks_log
 
 DEFAULT_QUEUE_DIR = "logs/worker-queue"
 
@@ -240,6 +247,7 @@ def plan_tasks_for_board(
     except FileNotFoundError as exc:
         return {"ok": False, "error": str(exc), "added_count": 0, "planned_count": 0, "blockers": []}
 
+    goals_diagnosis = diagnose_goals(goals)
     worker_instructions = _load_worker_instructions(config.worker_instructions_file)
     tasks = plan_daily_tasks(
         goals,
@@ -259,12 +267,76 @@ def plan_tasks_for_board(
             backlog_path=config.backlog_file,
             project_root=config.project_root,
         )
+        if not allow_repeat:
+            blockers.append(
+                "[info] Try enabling Allow repeat on the board to ignore memory/tasks-log.md history."
+            )
+    elif len(added) == 0:
+        blockers = [
+            "[info] Tasks were generated but none were added to the backlog.",
+            "[info] Open backlog items with the same title may already exist — complete or delete them first.",
+        ]
+
     return {
         "ok": True,
         "planned_count": len(tasks),
         "added_count": len(added),
         "added_titles": [task.title for task in added],
         "blockers": blockers,
+        "goals_diagnosis": goals_diagnosis,
+        "allow_repeat": allow_repeat,
+    }
+
+
+def diagnose_planning_readiness(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+) -> dict[str, Any]:
+    try:
+        goals = goals_content if goals_content is not None else load_goals(config.goals_file)
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    goals_diagnosis = diagnose_goals(goals)
+    backlog = load_backlog(config.backlog_file)
+    open_tasks = open_backlog_tasks(backlog)
+    tasks_log = load_tasks_log(config.tasks_log_file) if config.tasks_log_file.exists() else ""
+    completed_count = len(extract_completed_summaries(tasks_log))
+
+    open_preview = [
+        {
+            "id": str(task.get("id", "")),
+            "title": str(task.get("title", "")),
+            "status": normalize_status(str(task.get("status", "todo"))),
+        }
+        for task in open_tasks[:8]
+    ]
+
+    recommendations: list[str] = list(goals_diagnosis.get("hints", []))
+    if goals_diagnosis["eligible_count"] == 0:
+        recommendations.append(
+            "Without eligible goal bullets, planning only uses generic fallback tasks — "
+            "and those may already be done or still open in your backlog."
+        )
+    if open_tasks:
+        recommendations.append(
+            f"You have {len(open_tasks)} open backlog task(s). Finish, cancel, or delete them "
+            "if you want fresh plans from new goals."
+        )
+    if completed_count > 0:
+        recommendations.append(
+            f"memory/tasks-log.md has {completed_count} completed title(s). "
+            "Enable Allow repeat to plan similar tasks again."
+        )
+
+    return {
+        "ok": True,
+        "goals_diagnosis": goals_diagnosis,
+        "open_backlog_count": len(open_tasks),
+        "open_backlog_preview": open_preview,
+        "completed_log_count": completed_count,
+        "recommendations": recommendations,
     }
 
 

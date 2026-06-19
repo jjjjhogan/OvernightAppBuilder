@@ -11,6 +11,7 @@ from overnight_app_maker.task_manager import (
     cancel_task,
     complete_task,
     delete_task_entry,
+    diagnose_planning_readiness,
     list_task_views,
     plan_tasks_for_board,
     preview_task_prompt,
@@ -214,6 +215,52 @@ def test_board_payload_groups_columns(tmp_path: Path) -> None:
     assert len(payload["columns"]["queued"]) == 1
     assert len(payload["columns"]["done"]) == 1
     assert payload["goals_file"]
+
+
+def test_diagnose_planning_readiness_reports_open_backlog(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [{"id": "TASK-001", "title": "Open task", "status": "todo"}],
+    )
+    diagnosis = diagnose_planning_readiness(
+        config,
+        goals_content="# Goals\n\n## Personal\n\n- eat healthier\n",
+    )
+    assert diagnosis["ok"] is True
+    assert diagnosis["goals_diagnosis"]["eligible_count"] == 1
+    assert diagnosis["open_backlog_count"] == 1
+
+
+def test_plan_tasks_for_board_zero_when_no_bullets_and_blocked(tmp_path: Path) -> None:
+    from overnight_app_maker.planner import PLANNING_FALLBACK_TASKS
+    from overnight_app_maker.tasks_log import append_completion
+
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [
+            {
+                "id": f"TASK-{index:03d}",
+                "title": title,
+                "status": "todo",
+                "output_dir": output_dir,
+                "phase": "plan",
+            }
+            for index, (title, output_dir, _description) in enumerate(PLANNING_FALLBACK_TASKS, start=1)
+        ],
+    )
+    for index, (title, _output_dir, _description) in enumerate(PLANNING_FALLBACK_TASKS, start=1):
+        append_completion(config.tasks_log_file, f"TASK-{index:03d}", title)
+
+    result = plan_tasks_for_board(
+        config,
+        goals_content="## Personal\n\neat healthier\n",
+        allow_repeat=False,
+    )
+    assert result["planned_count"] == 0
+    assert result["added_count"] == 0
+    assert result["blockers"]
 
 
 def test_remove_queue_prompt_missing_is_false(tmp_path: Path) -> None:

@@ -43,6 +43,18 @@
     .sidebar .status-line { font-size: 0.75rem; min-height: 1rem; }
     .sidebar .status-line.ok { color: var(--ok); }
     .sidebar .status-line.err { color: var(--danger); }
+    .sidebar .status-line.warn { color: #e5c07b; }
+    #plan-diagnostics {
+      font-size: 0.75rem; color: var(--muted); background: #0b1017;
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.65rem;
+      max-height: 160px; overflow: auto;
+    }
+    #plan-diagnostics ul { margin: 0.35rem 0 0 1rem; padding: 0; }
+    #plan-diagnostics .eligible { color: var(--ok); }
+    #plan-diagnostics .problem { color: #e5c07b; }
+    .sidebar label.allow-repeat {
+      font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem;
+    }
     #goals-editor {
       flex: 1; min-height: 320px; width: 100%; background: #0b1017; color: var(--text);
       border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem;
@@ -115,13 +127,26 @@
       <div class="sidebar-actions">
         <button class="primary" id="save-goals">Save goals</button>
         <button id="plan-tasks">Plan tasks</button>
+        <button id="check-plan">Check goals</button>
       </div>
+      <label class="allow-repeat"><input type="checkbox" id="allow-repeat" /> Allow repeat (ignore tasks-log history)</label>
+      <div id="plan-diagnostics">Click Check goals to validate formatting before planning.</div>
       <div class="status-line" id="goals-status"></div>
-      <p class="hint">Replace Example: bullets with your real goals, save, then Plan tasks. Queue moves a task to the prompt column.</p>
+      <p class="hint">Use `- eat healthier` under ## Personal (dash required). Example: lines are ignored.</p>
     </aside>
     <main class="board" id="board"></main>
   </div>
   <div id="toast"></div>
+
+  <div class="modal-overlay" id="plan-result-modal">
+    <div class="modal-panel">
+      <h3 id="plan-result-title">Planning result</h3>
+      <pre class="prompt-box" id="plan-result-body" style="max-height:40vh;"></pre>
+      <div class="modal-actions">
+        <button id="plan-result-close">Close</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-overlay" id="queue-modal">
     <div class="modal-panel">
@@ -176,6 +201,60 @@
     const goalsEditor = document.getElementById("goals-editor");
     const goalsPathEl = document.getElementById("goals-path");
     const goalsStatusEl = document.getElementById("goals-status");
+    const planDiagnosticsEl = document.getElementById("plan-diagnostics");
+    const allowRepeatEl = document.getElementById("allow-repeat");
+
+    function showPlanResult(title, lines) {
+      document.getElementById("plan-result-title").textContent = title;
+      document.getElementById("plan-result-body").textContent = lines.join("\n");
+      document.getElementById("plan-result-modal").style.display = "flex";
+    }
+
+    function renderDiagnostics(data) {
+      if (!data || !data.ok) {
+        planDiagnosticsEl.innerHTML = `<span class="problem">${escapeHtml(data?.error || "Could not diagnose goals.")}</span>`;
+        return;
+      }
+      const gd = data.goals_diagnosis || {};
+      const eligible = gd.eligible_bullets || [];
+      const ignored = gd.ignored_lines || [];
+      let html = `<div class="eligible"><strong>${eligible.length}</strong> eligible goal bullet(s)</div>`;
+      if (eligible.length) {
+        html += "<ul>" + eligible.map(b => `<li>${escapeHtml(b.section)}: ${escapeHtml(b.text)}</li>`).join("") + "</ul>";
+      }
+      if (ignored.length) {
+        html += `<div class="problem">${ignored.length} line(s) missing \`- \` bullet prefix:</div><ul>`;
+        html += ignored.map(l => `<li>${escapeHtml(l.section)}: ${escapeHtml(l.line)}</li>`).join("") + "</ul>";
+      }
+      if (data.open_backlog_count > 0) {
+        html += `<div class="problem">${data.open_backlog_count} open backlog task(s) may block duplicate titles.</div>`;
+      }
+      if (data.completed_log_count > 0) {
+        html += `<div class="problem">${data.completed_log_count} completed task(s) in memory/tasks-log.md.</div>`;
+      }
+      if (data.recommendations && data.recommendations.length) {
+        html += "<ul>" + data.recommendations.slice(0, 4).map(r => `<li>${escapeHtml(r.replace(/^\[info\]\s*/, ""))}</li>`).join("") + "</ul>";
+      }
+      planDiagnosticsEl.innerHTML = html;
+    }
+
+    async function checkGoals() {
+      try {
+        const data = await api("/api/plan/diagnose", {
+          method: "POST",
+          body: JSON.stringify(goalsPayload()),
+        });
+        renderDiagnostics(data);
+        if ((data.goals_diagnosis?.eligible_count || 0) === 0) {
+          setGoalsStatus("No eligible goal bullets — fix formatting before planning.", true);
+        } else {
+          setGoalsStatus(`Ready: ${data.goals_diagnosis.eligible_count} goal bullet(s) found.`);
+        }
+      } catch (err) {
+        setGoalsStatus(err.message, true);
+        showToast(err.message);
+      }
+    }
 
     function showToast(message) {
       toastEl.textContent = message;
@@ -237,18 +316,41 @@
       try {
         const data = await api("/api/plan", {
           method: "POST",
-          body: JSON.stringify({ ...goalsPayload(), allow_repeat: false }),
+          body: JSON.stringify({
+            ...goalsPayload(),
+            allow_repeat: allowRepeatEl.checked,
+          }),
         });
-        if (data.goals_content !== undefined) {
-          savedGoalsContent = goalsEditor.value;
-          goalsEditor.classList.remove("dirty");
+        savedGoalsContent = goalsEditor.value;
+        goalsEditor.classList.remove("dirty");
+        renderDiagnostics(data);
+
+        const lines = [
+          `Planned: ${data.planned_count}`,
+          `Added to backlog: ${data.added_count}`,
+        ];
+        if (data.added_titles && data.added_titles.length) {
+          lines.push("", "New tasks:");
+          data.added_titles.forEach(t => lines.push(`- ${t}`));
         }
-        let msg = `Planned ${data.planned_count}, added ${data.added_count} to backlog.`;
         if (data.blockers && data.blockers.length) {
-          msg += " " + data.blockers.filter(l => l.includes("eligible")).join(" ");
+          lines.push("", "Notes:");
+          data.blockers.forEach(b => lines.push(b.replace(/^\[info\]\s*/, "")));
         }
-        showToast(msg);
-        setGoalsStatus(msg);
+
+        if (data.planned_count === 0 || data.added_count === 0) {
+          showPlanResult(
+            data.planned_count === 0 ? "No tasks planned" : "Nothing added to backlog",
+            lines,
+          );
+          setGoalsStatus(
+            data.planned_count === 0 ? "Planning blocked — see details." : "Tasks generated but not added.",
+            true,
+          );
+        } else {
+          showToast(`Added ${data.added_count} task(s) to the backlog.`);
+          setGoalsStatus(`Added ${data.added_count} task(s).`);
+        }
         await loadBoard();
       } catch (err) {
         setGoalsStatus(err.message, true);
@@ -440,10 +542,18 @@
       }
     }
 
-    goalsEditor.addEventListener("input", markGoalsDirty);
-    document.getElementById("refresh").addEventListener("click", () => { loadBoard(); loadGoals(); });
-    document.getElementById("save-goals").addEventListener("click", saveGoals);
+    goalsEditor.addEventListener("input", () => {
+      markGoalsDirty();
+      clearTimeout(window._diagnoseTimer);
+      window._diagnoseTimer = setTimeout(checkGoals, 600);
+    });
+    document.getElementById("refresh").addEventListener("click", () => { loadBoard(); loadGoals(); checkGoals(); });
+    document.getElementById("save-goals").addEventListener("click", async () => { await saveGoals(); await checkGoals(); });
     document.getElementById("plan-tasks").addEventListener("click", planTasks);
+    document.getElementById("check-plan").addEventListener("click", checkGoals);
+    document.getElementById("plan-result-close").addEventListener("click", () => {
+      document.getElementById("plan-result-modal").style.display = "none";
+    });
     document.getElementById("confirm-queue").addEventListener("click", confirmQueue);
     document.getElementById("cancel-queue").addEventListener("click", () => {
       pendingQueueTaskId = null;
@@ -458,7 +568,7 @@
       }
     });
 
-    loadGoals();
+    loadGoals().then(checkGoals);
     loadBoard();
     setInterval(loadBoard, 20000);
   </script>
