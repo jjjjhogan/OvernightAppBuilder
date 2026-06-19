@@ -13,18 +13,26 @@ from overnight_app_maker.task_manager import (
     delete_task_entry,
     list_task_views,
     queue_prompt_path,
+    queue_task,
+    read_goals,
     remove_queue_prompt,
     show_task,
+    write_goals,
 )
 
 
 def _config(tmp_path: Path) -> AppConfig:
+    goals = tmp_path / "goals.md"
+    goals.write_text("# Goals\n\n- Build something useful.\n", encoding="utf-8")
+    instructions = tmp_path / "docs" / "worker-instructions.md"
+    instructions.parent.mkdir(parents=True)
+    instructions.write_text("Follow the task brief.\n", encoding="utf-8")
     return AppConfig(
         project_root=tmp_path,
-        goals_file=tmp_path / "goals.md",
+        goals_file=goals,
         backlog_file=tmp_path / "backlog" / "tasks.yml",
         tasks_log_file=tmp_path / "memory" / "tasks-log.md",
-        worker_instructions_file=tmp_path / "docs" / "worker-instructions.md",
+        worker_instructions_file=instructions,
         max_daily_tasks=5,
         execution_mode="queue",
         openclaw_agent_id="main",
@@ -56,7 +64,7 @@ def test_list_task_views(tmp_path: Path) -> None:
 def test_cancel_task_removes_prompt_by_default(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _write_backlog(config.backlog_file, [{"id": "TASK-003", "title": "Cancel me", "status": "queued"}])
-    prompt = queue_prompt_path(config.project_root, "TASK-003")
+    prompt = queue_prompt_path(config.project_root, "TASK-003", "logs/worker-queue")
     prompt.parent.mkdir(parents=True)
     prompt.write_text("prompt body", encoding="utf-8")
 
@@ -91,18 +99,61 @@ def test_complete_task_updates_log(tmp_path: Path) -> None:
     assert "TASK-005: Finish me" in config.tasks_log_file.read_text(encoding="utf-8")
 
 
-def test_build_openclaw_commands_from_prompt_file(tmp_path: Path) -> None:
+def test_build_openclaw_commands_uses_prompt_file_not_inline(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _write_backlog(config.backlog_file, [{"id": "TASK-006", "title": "Run me", "status": "queued"}])
-    prompt = queue_prompt_path(config.project_root, "TASK-006")
+    prompt = queue_prompt_path(config.project_root, "TASK-006", "logs/worker-queue")
     prompt.parent.mkdir(parents=True)
-    prompt.write_text("Do the work", encoding="utf-8")
+    long_prompt = "Do the work. " * 500
+    prompt.write_text(long_prompt, encoding="utf-8")
 
     commands = build_openclaw_commands(config, "TASK-006")
     assert commands is not None
     assert "openclaw agent" in commands["bash"]
-    assert "Do the work" in commands["bash"]
+    assert "logs/worker-queue/TASK-006.prompt.txt" in commands["bash"]
+    assert "$(cat logs/worker-queue/TASK-006.prompt.txt)" in commands["bash"]
+    assert long_prompt not in commands["bash"]
+    assert "Get-Content" in commands["powershell"]
     assert "overnight-task-006" in commands["session_key"]
+
+
+def test_queue_task_writes_prompt_and_updates_status(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [
+            {
+                "id": "TASK-007",
+                "title": "Research one opportunity from the goals file",
+                "description": "Produce a report.",
+                "output_dir": "reports",
+                "status": "todo",
+                "phase": "plan",
+            }
+        ],
+    )
+
+    ok, detail = queue_task(config, "TASK-007")
+    assert ok
+    assert "Queued TASK-007" in detail
+
+    task = show_task(config, "TASK-007")
+    assert task is not None
+    assert task["status"] == "queued"
+    assert task["has_prompt"]
+
+    prompt = queue_prompt_path(config.project_root, "TASK-007", "logs/worker-queue")
+    assert prompt.exists()
+    assert "TASK-007" in prompt.read_text(encoding="utf-8")
+
+
+def test_write_and_read_goals(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    ok, detail = write_goals(config, "# Goals\n\n- New bullet\n")
+    assert ok
+    data = read_goals(config)
+    assert "New bullet" in data["content"]
+    assert data["exists"] is True
 
 
 def test_board_payload_groups_columns(tmp_path: Path) -> None:
@@ -120,8 +171,9 @@ def test_board_payload_groups_columns(tmp_path: Path) -> None:
     assert len(payload["columns"]["todo"]) == 1
     assert len(payload["columns"]["queued"]) == 1
     assert len(payload["columns"]["done"]) == 1
+    assert payload["goals_file"]
 
 
 def test_remove_queue_prompt_missing_is_false(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    assert remove_queue_prompt(config.project_root, "TASK-999") is False
+    assert remove_queue_prompt(config.project_root, "TASK-999", "logs/worker-queue") is False

@@ -19,7 +19,10 @@ from .task_manager import (
     format_task_detail,
     format_task_list,
     list_task_views,
+    queue_task,
+    read_goals,
     show_task,
+    write_goals,
 )
 
 
@@ -114,6 +117,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     command_parser = tasks_sub.add_parser("command", help="Print manual openclaw agent command for a queued task.")
     command_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+
+    queue_parser = tasks_sub.add_parser("queue", help="Write worker prompt and mark task queued (single-task queue mode).")
+    queue_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+
+    goals_parser = subparsers.add_parser("goals", help="View or edit the goals file.")
+    _add_shared_config_args(goals_parser)
+    goals_parser.add_argument("--goals", help="Path to the goals markdown file.")
+    goals_sub = goals_parser.add_subparsers(dest="goals_command", required=True)
+    goals_sub.add_parser("show", help="Print the current goals file.")
+    goals_save = goals_sub.add_parser("save", help="Save goals from a markdown file or stdin.")
+    goals_save.add_argument("file", nargs="?", help="Markdown file to write as goals (defaults to stdin).")
 
     return parser
 
@@ -227,14 +241,51 @@ def _run_tasks(args: argparse.Namespace) -> None:
         if not commands:
             print(f"[error] No prompt found for {task_id}. Queue the task first.", file=sys.stderr)
             raise SystemExit(1)
+        if commands.get("error") and not commands.get("bash"):
+            print(f"[error] {commands['error']}", file=sys.stderr)
+            raise SystemExit(1)
         print(f"[info] session_key={commands['session_key']}")
+        if commands.get("prompt_path"):
+            print(f"[info] prompt_path={commands['prompt_path']}")
         print("\n# Bash / Mac")
         print(commands["bash"])
         print("\n# PowerShell / Windows")
         print(commands["powershell"])
         return
 
+    if cmd == "queue":
+        ok, detail = queue_task(config, task_id)
+        if not ok:
+            print(f"[error] {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[ok] {detail}")
+        return
+
     print(f"[error] Unknown tasks command: {cmd}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _run_goals(args: argparse.Namespace) -> None:
+    config = _resolve_config(args)
+    cmd = args.goals_command
+
+    if cmd == "show":
+        data = read_goals(config)
+        if not data["exists"]:
+            print(f"[warn] Goals file not found: {data['path']}", file=sys.stderr)
+        print(data["content"])
+        return
+
+    if cmd == "save":
+        if args.file:
+            content = Path(args.file).read_text(encoding="utf-8")
+        else:
+            content = sys.stdin.read()
+        ok, detail = write_goals(config, content)
+        print(f"[ok] {detail}")
+        return
+
+    print(f"[error] Unknown goals command: {cmd}", file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -253,6 +304,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_board(args)
     elif args.command == "tasks":
         _run_tasks(args)
+    elif args.command == "goals":
+        _run_goals(args)
     else:
         parser.print_help()
         raise SystemExit(1)

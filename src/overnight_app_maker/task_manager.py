@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +10,24 @@ from .backlog import (
     kanban_column,
     load_backlog,
     normalize_status,
+    planned_task_from_backlog,
+    update_task_fields,
     update_task_status,
 )
 from .config import AppConfig
+from .goals import goals_view, load_goals, save_goals
+from .models import PlannedTask
+from .openclaw_adapter import queue_worker_prompt
+from .planner import _find_latest_planning_artifact, build_worker_prompt
 from .tasks_log import append_completion
 
 DEFAULT_QUEUE_DIR = "logs/worker-queue"
+
+
+def queue_dir_for_config(config: AppConfig) -> str:
+    if config.output_dirs:
+        return f"{config.output_dirs[-1]}/worker-queue"
+    return DEFAULT_QUEUE_DIR
 
 
 def queue_prompt_path(project_root: Path, task_id: str, queue_dir: str = DEFAULT_QUEUE_DIR) -> Path:
@@ -29,6 +40,36 @@ def remove_queue_prompt(project_root: Path, task_id: str, queue_dir: str = DEFAU
         return False
     path.unlink()
     return True
+
+
+def _load_worker_instructions(path: Path) -> str:
+    if not path.exists():
+        return (
+            "Complete the assigned task using the project goals and task brief.\n"
+            "Write artifacts into the requested output folder.\n"
+            "When done, append a completed task line to memory/tasks-log.md.\n"
+            "Never edit AUTONOMOUS.md directly."
+        )
+    return path.read_text(encoding="utf-8")
+
+
+def resolve_worker_prompt(
+    *,
+    task: PlannedTask,
+    goals: str,
+    worker_instructions: str,
+    project_root: Path,
+) -> str:
+    if task.worker_prompt.strip():
+        return task.worker_prompt
+    artifact = _find_latest_planning_artifact(project_root) if task.phase == "build" else None
+    return build_worker_prompt(
+        task=task,
+        goals=goals,
+        worker_instructions=worker_instructions,
+        project_root=project_root,
+        planning_artifact=artifact,
+    )
 
 
 def task_to_view(task: dict[str, Any], *, project_root: Path, queue_dir: str = DEFAULT_QUEUE_DIR) -> dict[str, Any]:
@@ -55,8 +96,9 @@ def list_task_views(
     config: AppConfig,
     *,
     status_filter: str | None = None,
-    queue_dir: str = DEFAULT_QUEUE_DIR,
+    queue_dir: str | None = None,
 ) -> list[dict[str, Any]]:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     views: list[dict[str, Any]] = []
     normalized_filter = normalize_status(status_filter) if status_filter else None
     for task in load_backlog(config.backlog_file):
@@ -67,7 +109,13 @@ def list_task_views(
     return views
 
 
-def show_task(config: AppConfig, task_id: str, *, queue_dir: str = DEFAULT_QUEUE_DIR) -> dict[str, Any] | None:
+def show_task(
+    config: AppConfig,
+    task_id: str,
+    *,
+    queue_dir: str | None = None,
+) -> dict[str, Any] | None:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     task = get_task(config.backlog_file, task_id)
     if not task:
         return None
@@ -79,8 +127,9 @@ def cancel_task(
     task_id: str,
     *,
     remove_prompt: bool = True,
-    queue_dir: str = DEFAULT_QUEUE_DIR,
+    queue_dir: str | None = None,
 ) -> tuple[bool, str]:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     if not get_task(config.backlog_file, task_id):
         return False, f"Task {task_id} not found."
     update_task_status(config.backlog_file, task_id, "cancelled")
@@ -98,8 +147,9 @@ def delete_task_entry(
     task_id: str,
     *,
     remove_prompt: bool = True,
-    queue_dir: str = DEFAULT_QUEUE_DIR,
+    queue_dir: str | None = None,
 ) -> tuple[bool, str]:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     if not get_task(config.backlog_file, task_id):
         return False, f"Task {task_id} not found."
     delete_task(config.backlog_file, task_id)
@@ -117,8 +167,9 @@ def complete_task(
     task_id: str,
     *,
     remove_prompt: bool = False,
-    queue_dir: str = DEFAULT_QUEUE_DIR,
+    queue_dir: str | None = None,
 ) -> tuple[bool, str]:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     task = get_task(config.backlog_file, task_id)
     if not task:
         return False, f"Task {task_id} not found."
@@ -134,7 +185,89 @@ def complete_task(
     return True, detail
 
 
-def read_prompt_text(config: AppConfig, task_id: str, *, queue_dir: str = DEFAULT_QUEUE_DIR) -> str | None:
+def queue_task(config: AppConfig, task_id: str) -> tuple[bool, str]:
+    """Write worker prompt file and mark backlog task as queued (same as --mode queue for one task)."""
+    queue_dir = queue_dir_for_config(config)
+    task_dict = get_task(config.backlog_file, task_id)
+    if not task_dict:
+        return False, f"Task {task_id} not found."
+
+    status = normalize_status(str(task_dict.get("status", "todo")))
+    if status in {"done", "cancelled"}:
+        return False, f"Cannot queue {task_id} with status {status}."
+
+    try:
+        goals = load_goals(config.goals_file)
+    except FileNotFoundError as exc:
+        return False, str(exc)
+
+    planned = planned_task_from_backlog(task_dict)
+    worker_instructions = _load_worker_instructions(config.worker_instructions_file)
+    prompt = resolve_worker_prompt(
+        task=planned,
+        goals=goals,
+        worker_instructions=worker_instructions,
+        project_root=config.project_root,
+    )
+
+    output_path = config.project_root / planned.output_dir
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    result = queue_worker_prompt(
+        task_id=task_id,
+        prompt=prompt,
+        project_root=config.project_root,
+        queue_dir=queue_dir,
+    )
+    update_task_fields(
+        config.backlog_file,
+        task_id,
+        status="queued",
+        worker_prompt=prompt,
+        output_dir=planned.output_dir,
+    )
+    rel_path = queue_prompt_path(config.project_root, task_id, queue_dir).relative_to(config.project_root).as_posix()
+    return True, f"Queued {task_id}. Prompt written to {rel_path}. ({result.detail})"
+
+
+def update_task_details(
+    config: AppConfig,
+    task_id: str,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> tuple[bool, str]:
+    if not get_task(config.backlog_file, task_id):
+        return False, f"Task {task_id} not found."
+    fields: dict[str, Any] = {}
+    if title is not None and title.strip():
+        fields["title"] = title.strip()
+    if description is not None:
+        fields["description"] = description.strip()
+    if not fields:
+        return False, "No fields to update."
+    update_task_fields(config.backlog_file, task_id, **fields)
+    return True, f"Updated {task_id}."
+
+
+def read_goals(config: AppConfig) -> dict[str, str]:
+    data = goals_view(config.goals_file, config.project_root)
+    return {"path": data["path"], "content": data["content"], "exists": data["exists"] == "true"}
+
+
+def write_goals(config: AppConfig, content: str) -> tuple[bool, str]:
+    save_goals(config.goals_file, content)
+    rel = config.goals_file.relative_to(config.project_root).as_posix()
+    return True, f"Saved goals to {rel}."
+
+
+def read_prompt_text(
+    config: AppConfig,
+    task_id: str,
+    *,
+    queue_dir: str | None = None,
+) -> str | None:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     path = queue_prompt_path(config.project_root, task_id, queue_dir)
     if not path.exists():
         return None
@@ -145,31 +278,49 @@ def build_openclaw_commands(
     config: AppConfig,
     task_id: str,
     *,
-    queue_dir: str = DEFAULT_QUEUE_DIR,
+    queue_dir: str | None = None,
 ) -> dict[str, str] | None:
-    prompt = read_prompt_text(config, task_id, queue_dir=queue_dir)
-    if prompt is None:
-        task = get_task(config.backlog_file, task_id)
-        if not task:
-            return None
-        worker_prompt = str(task.get("worker_prompt", "")).strip()
-        if not worker_prompt:
-            return None
-        prompt = worker_prompt
-
+    queue_dir = queue_dir or queue_dir_for_config(config)
+    prompt_path = queue_prompt_path(config.project_root, task_id, queue_dir)
+    rel_prompt = prompt_path.relative_to(config.project_root).as_posix()
     session_key = f"overnight-{task_id.lower()}"
     agent = config.openclaw_agent_id
-    base = ["openclaw", "agent", "--agent", agent, "--session-key", session_key, "--message"]
-    posix = " ".join(base + [shlex.quote(prompt)])
-    powershell = (
-        f'openclaw agent --agent {agent} --session-key {session_key} '
-        f'--message "$(Get-Content {queue_prompt_path(config.project_root, task_id, queue_dir).as_posix()} -Raw)"'
-    )
+
+    if prompt_path.exists():
+        bash = (
+            f'openclaw agent --agent {agent} --session-key {session_key} '
+            f'--message "$(cat {rel_prompt})"'
+        )
+        ps_path = rel_prompt.replace("/", "\\") if rel_prompt else rel_prompt
+        powershell = (
+            f'openclaw agent --agent {agent} --session-key {session_key} '
+            f'--message "$(Get-Content {ps_path} -Raw)"'
+        )
+        preview = prompt_path.read_text(encoding="utf-8")
+        preview = preview[:200] + ("..." if len(preview) > 200 else "")
+        return {
+            "bash": bash,
+            "powershell": powershell,
+            "session_key": session_key,
+            "prompt_path": rel_prompt,
+            "prompt_preview": preview,
+        }
+
+    task = get_task(config.backlog_file, task_id)
+    if not task:
+        return None
+    worker_prompt = str(task.get("worker_prompt", "")).strip()
+    if not worker_prompt:
+        return None
+
+    preview = worker_prompt[:200] + ("..." if len(worker_prompt) > 200 else "")
     return {
-        "bash": posix,
-        "powershell": powershell,
+        "bash": "",
+        "powershell": "",
         "session_key": session_key,
-        "prompt_preview": prompt[:200] + ("..." if len(prompt) > 200 else ""),
+        "prompt_path": "",
+        "prompt_preview": preview,
+        "error": f"No prompt file at {rel_prompt}. Click Queue on the board first.",
     }
 
 
@@ -198,7 +349,8 @@ def format_task_detail(task: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def board_payload(config: AppConfig, *, queue_dir: str = DEFAULT_QUEUE_DIR) -> dict[str, Any]:
+def board_payload(config: AppConfig, *, queue_dir: str | None = None) -> dict[str, Any]:
+    queue_dir = queue_dir or queue_dir_for_config(config)
     views = list_task_views(config, queue_dir=queue_dir)
     columns: dict[str, list[dict[str, Any]]] = {
         "todo": [],
@@ -213,9 +365,11 @@ def board_payload(config: AppConfig, *, queue_dir: str = DEFAULT_QUEUE_DIR) -> d
         if column not in columns:
             column = "todo"
         columns[column].append(view)
+    goals = read_goals(config)
     return {
         "project_root": str(config.project_root),
         "backlog_file": str(config.backlog_file.relative_to(config.project_root)),
+        "goals_file": goals["path"],
         "columns": columns,
         "total": len(views),
     }

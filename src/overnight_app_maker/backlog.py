@@ -88,6 +88,7 @@ def planned_task_from_backlog(task: dict[str, Any]) -> PlannedTask:
         description=str(task.get("description", task.get("title", ""))),
         output_dir=str(task.get("output_dir", "reports")),
         worker_prompt=str(task.get("worker_prompt", "")),
+        phase=str(task.get("phase", "plan")),
     )
 
 
@@ -168,6 +169,22 @@ def get_task(path: Path, task_id: str) -> dict[str, Any] | None:
         if str(task.get("id")) == task_id:
             return task
     return None
+
+
+def update_task_fields(path: Path, task_id: str, **fields: Any) -> bool:
+    tasks = load_backlog(path)
+    updated = False
+    for task in tasks:
+        if str(task.get("id")) != task_id:
+            continue
+        for key, value in fields.items():
+            if value is not None:
+                task[key] = value
+        updated = True
+        break
+    if updated:
+        save_backlog(path, tasks)
+    return updated
 
 
 def delete_task(path: Path, task_id: str) -> bool:

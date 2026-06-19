@@ -32,10 +32,12 @@ python -m overnight_app_maker board
 
 # CLI backup if the board is unavailable
 python -m overnight_app_maker tasks list
+python -m overnight_app_maker tasks queue TASK-002
 python -m overnight_app_maker tasks command TASK-002
 python -m overnight_app_maker tasks complete TASK-002
 python -m overnight_app_maker tasks cancel TASK-003
 python -m overnight_app_maker tasks delete TASK-004
+python -m overnight_app_maker goals show
 ```
 
 The default command is still `plan` (same flags as before). Example:

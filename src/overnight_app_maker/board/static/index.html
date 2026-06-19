@@ -13,8 +13,6 @@
       --muted: #8b9cb3;
       --accent: #5b9fd4;
       --danger: #e06c75;
-      --ok: #98c379;
-      --warn: #e5c07b;
     }
     * { box-sizing: border-box; }
     body {
@@ -34,15 +32,9 @@
       justify-content: space-between;
       background: #121820;
     }
-    header h1 {
-      margin: 0;
-      font-size: 1.1rem;
-      font-weight: 600;
-    }
-    header .meta {
-      color: var(--muted);
-      font-size: 0.85rem;
-    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    header .meta { color: var(--muted); font-size: 0.85rem; }
+    .header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     button {
       background: var(--panel);
       color: var(--text);
@@ -55,6 +47,31 @@
     button:hover { border-color: var(--accent); }
     button.primary { background: #264a6e; border-color: var(--accent); }
     button.danger { border-color: #7a3a3f; color: #ffd6d8; }
+    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 64px); }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: #121820;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .sidebar h2 { margin: 0; font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .sidebar .path { font-size: 0.75rem; color: var(--muted); word-break: break-all; }
+    #goals-editor {
+      flex: 1;
+      min-height: 240px;
+      width: 100%;
+      background: #0b1017;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.8rem;
+      resize: vertical;
+    }
     .board {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -105,8 +122,9 @@
       padding: 0.65rem 0.9rem;
       border-radius: 8px;
       display: none;
-      max-width: 360px;
+      max-width: 420px;
       font-size: 0.85rem;
+      z-index: 20;
     }
     #modal {
       position: fixed;
@@ -116,14 +134,17 @@
       align-items: center;
       justify-content: center;
       padding: 1rem;
+      z-index: 10;
     }
     #modal .panel {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 10px;
-      max-width: 640px;
+      max-width: 720px;
       width: 100%;
       padding: 1rem;
+      max-height: 90vh;
+      overflow: auto;
     }
     #modal pre {
       background: #0b1017;
@@ -131,6 +152,7 @@
       border-radius: 6px;
       padding: 0.75rem;
       overflow: auto;
+      max-height: 120px;
       font-size: 0.8rem;
       white-space: pre-wrap;
       word-break: break-word;
@@ -145,6 +167,7 @@
       border-radius: 8px;
       display: none;
     }
+    .hint { font-size: 0.75rem; color: var(--muted); margin: 0.25rem 0 0.5rem; }
   </style>
 </head>
 <body>
@@ -153,22 +176,34 @@
       <h1>OvernightAppMaker Kanban</h1>
       <div class="meta" id="meta">Loading…</div>
     </div>
-    <div>
-      <button class="primary" id="refresh">Refresh</button>
+    <div class="header-actions">
+      <button class="primary" id="refresh">Refresh board</button>
     </div>
   </header>
   <div class="error-banner" id="error"></div>
-  <main class="board" id="board"></main>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Goals</h2>
+      <div class="path" id="goals-path">…</div>
+      <textarea id="goals-editor" placeholder="# Goals&#10;&#10;- Your goal bullets here"></textarea>
+      <button class="primary" id="save-goals">Save goals</button>
+      <p class="hint">Edit goals here, then queue tasks from the To Do column.</p>
+    </aside>
+    <main class="board" id="board"></main>
+  </div>
   <div id="toast"></div>
   <div id="modal">
     <div class="panel">
-      <h3 id="modal-title">OpenClaw command</h3>
-      <p style="color:var(--muted);font-size:0.85rem;">Run this in your terminal to execute the task manually and watch token usage.</p>
-      <p><strong>Bash / Mac</strong></p>
-      <pre id="cmd-bash"></pre>
-      <p><strong>PowerShell / Windows</strong></p>
-      <pre id="cmd-ps"></pre>
-      <button id="modal-close">Close</button>
+      <h3>OpenClaw command</h3>
+      <p class="hint">Run in your terminal to execute manually and watch token usage. Copies the command below — not the prompt file contents.</p>
+      <p id="cmd-platform-label"><strong>Command</strong></p>
+      <pre id="cmd-primary"></pre>
+      <p class="hint" id="cmd-alt-label"></p>
+      <pre id="cmd-alt" style="display:none;"></pre>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+        <button class="primary" id="copy-cmd">Copy command</button>
+        <button id="modal-close">Close</button>
+      </div>
     </div>
   </div>
   <script>
@@ -181,15 +216,20 @@
       cancelled: "Cancelled",
     };
 
+    const isWindows = navigator.platform.toLowerCase().includes("win");
+    let lastCommand = { primary: "", alt: "", altLabel: "" };
+
     const boardEl = document.getElementById("board");
     const metaEl = document.getElementById("meta");
     const errorEl = document.getElementById("error");
     const toastEl = document.getElementById("toast");
+    const goalsEditor = document.getElementById("goals-editor");
+    const goalsPathEl = document.getElementById("goals-path");
 
     function showToast(message) {
       toastEl.textContent = message;
       toastEl.style.display = "block";
-      setTimeout(() => { toastEl.style.display = "none"; }, 3500);
+      setTimeout(() => { toastEl.style.display = "none"; }, 4000);
     }
 
     async function api(path, options = {}) {
@@ -200,6 +240,25 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
       return data;
+    }
+
+    async function loadGoals() {
+      const data = await api("/api/goals");
+      goalsPathEl.textContent = data.path;
+      goalsEditor.value = data.content || "";
+    }
+
+    async function saveGoals() {
+      try {
+        const data = await api("/api/goals", {
+          method: "PUT",
+          body: JSON.stringify({ content: goalsEditor.value }),
+        });
+        showToast(data.detail || "Goals saved.");
+        goalsEditor.value = data.goals.content;
+      } catch (err) {
+        showToast(err.message);
+      }
     }
 
     function renderCard(task) {
@@ -215,6 +274,14 @@
         <div class="card-actions"></div>
       `;
       const actions = card.querySelector(".card-actions");
+
+      if (task.status === "todo" || task.status === "failed") {
+        const queueBtn = document.createElement("button");
+        queueBtn.className = "primary";
+        queueBtn.textContent = "Queue";
+        queueBtn.addEventListener("click", () => act(task.id, "queue"));
+        actions.appendChild(queueBtn);
+      }
 
       if (task.has_prompt) {
         const cmdBtn = document.createElement("button");
@@ -277,15 +344,34 @@
       }
     }
 
+    async function copyText(text) {
+      if (navigator.clipboard && text) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      return false;
+    }
+
     async function showCommand(taskId) {
       try {
         const data = await api(`/api/tasks/${taskId}/command`);
-        document.getElementById("cmd-bash").textContent = data.bash || "";
-        document.getElementById("cmd-ps").textContent = data.powershell || "";
+        const primary = isWindows ? data.powershell : data.bash;
+        const alt = isWindows ? data.bash : data.powershell;
+        const primaryLabel = isWindows ? "PowerShell / Windows" : "Bash / Mac";
+        const altLabel = isWindows ? "Bash / Mac (alternate)" : "PowerShell / Windows (alternate)";
+
+        document.getElementById("cmd-platform-label").innerHTML = `<strong>${primaryLabel}</strong>`;
+        document.getElementById("cmd-primary").textContent = primary || "(unavailable)";
+        document.getElementById("cmd-alt-label").textContent = alt ? altLabel : "";
+        const altEl = document.getElementById("cmd-alt");
+        altEl.style.display = alt ? "block" : "none";
+        altEl.textContent = alt || "";
+
+        lastCommand = { primary, alt, altLabel };
         document.getElementById("modal").style.display = "flex";
-        if (data.bash && navigator.clipboard) {
-          await navigator.clipboard.writeText(data.bash);
-          showToast("Copied bash command to clipboard.");
+
+        if (primary && await copyText(primary)) {
+          showToast(`Copied ${primaryLabel} command to clipboard.`);
         }
       } catch (err) {
         showToast(err.message);
@@ -295,6 +381,7 @@
     function renderBoard(payload) {
       boardEl.innerHTML = "";
       metaEl.textContent = `${payload.total} task(s) · ${payload.backlog_file}`;
+      if (payload.goals_file) goalsPathEl.textContent = payload.goals_file;
       for (const [key, label] of Object.entries(COLUMN_LABELS)) {
         const col = document.createElement("section");
         col.className = "column";
@@ -324,11 +411,18 @@
       }
     }
 
-    document.getElementById("refresh").addEventListener("click", loadBoard);
+    document.getElementById("refresh").addEventListener("click", () => { loadBoard(); loadGoals(); });
+    document.getElementById("save-goals").addEventListener("click", saveGoals);
     document.getElementById("modal-close").addEventListener("click", () => {
       document.getElementById("modal").style.display = "none";
     });
+    document.getElementById("copy-cmd").addEventListener("click", async () => {
+      if (lastCommand.primary && await copyText(lastCommand.primary)) {
+        showToast("Command copied.");
+      }
+    });
 
+    loadGoals();
     loadBoard();
     setInterval(loadBoard, 15000);
   </script>

@@ -18,7 +18,11 @@ from ..task_manager import (
     cancel_task,
     complete_task,
     delete_task_entry,
+    queue_task,
+    read_goals,
     show_task,
+    update_task_details,
+    write_goals,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -49,14 +53,6 @@ class BoardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_text(self, status: HTTPStatus, text: str, content_type: str = "text/plain; charset=utf-8") -> None:
-        body = text.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
     def _read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0:
@@ -82,6 +78,9 @@ class BoardHandler(BaseHTTPRequestHandler):
         if path == "/api/board":
             return self._send_json(HTTPStatus.OK, board_payload(self.config))
 
+        if path == "/api/goals":
+            return self._send_json(HTTPStatus.OK, read_goals(self.config))
+
         if path.startswith("/api/tasks/"):
             task_id = path.removeprefix("/api/tasks/").split("/", 1)[0].upper()
             if not TASK_ID_PATTERN.match(task_id):
@@ -90,11 +89,43 @@ class BoardHandler(BaseHTTPRequestHandler):
                 commands = build_openclaw_commands(self.config, task_id)
                 if not commands:
                     return self._send_json(HTTPStatus.NOT_FOUND, {"error": f"No prompt for {task_id}."})
+                if commands.get("error") and not commands.get("bash"):
+                    return self._send_json(HTTPStatus.BAD_REQUEST, {"error": commands["error"], **commands})
                 return self._send_json(HTTPStatus.OK, {"task_id": task_id, **commands})
             task = show_task(self.config, task_id)
             if not task:
                 return self._send_json(HTTPStatus.NOT_FOUND, {"error": f"Task {task_id} not found."})
             return self._send_json(HTTPStatus.OK, task)
+
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found."})
+
+    def do_PUT(self) -> None:
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+
+        if path == "/api/goals":
+            body = self._read_json_body()
+            content = body.get("content")
+            if content is None or not isinstance(content, str):
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Missing goals content."})
+            ok, detail = write_goals(self.config, content)
+            return self._send_json(HTTPStatus.OK, {"ok": ok, "detail": detail, "goals": read_goals(self.config)})
+
+        if path.startswith("/api/tasks/"):
+            task_id = path.removeprefix("/api/tasks/").split("/", 1)[0].upper()
+            if not TASK_ID_PATTERN.match(task_id):
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid task id."})
+            body = self._read_json_body()
+            ok, detail = update_task_details(
+                self.config,
+                task_id,
+                title=body.get("title"),
+                description=body.get("description"),
+            )
+            if not ok:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+            task = show_task(self.config, task_id)
+            return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found."})
 
@@ -113,6 +144,13 @@ class BoardHandler(BaseHTTPRequestHandler):
         action = parts[1].lower() if len(parts) > 1 else ""
         body = self._read_json_body()
         remove_prompt = bool(body.get("remove_prompt", True))
+
+        if action == "queue":
+            ok, detail = queue_task(self.config, task_id)
+            if not ok:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+            task = show_task(self.config, task_id)
+            return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
 
         if action == "complete":
             ok, detail = complete_task(self.config, task_id, remove_prompt=remove_prompt)
@@ -169,6 +207,7 @@ def run_board_server(
     url = f"http://{host}:{port}/"
     print(f"[info] Kanban board at {url}")
     print(f"[info] Backlog: {config.backlog_file}")
+    print(f"[info] Goals: {config.goals_file}")
     print("[info] Press Ctrl+C to stop.")
 
     if open_browser:
