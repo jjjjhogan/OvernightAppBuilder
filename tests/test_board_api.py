@@ -12,8 +12,12 @@ from overnight_app_maker.config import AppConfig
 
 
 def _config(tmp_path: Path) -> AppConfig:
-    goals = tmp_path / "goals.md"
-    goals.write_text("# Goals\n\n- Ship a feature.\n", encoding="utf-8")
+    goals = tmp_path / "goals" / "GOALS.example.md"
+    goals.parent.mkdir(parents=True)
+    goals.write_text(
+        "# Goals\n\n## Personal\n\n- Build a study planner app.\n",
+        encoding="utf-8",
+    )
     backlog = tmp_path / "backlog" / "tasks.yml"
     backlog.parent.mkdir(parents=True)
     backlog.write_text(
@@ -63,7 +67,7 @@ def _request(port: int, method: str, path: str, body: dict | None = None) -> tup
     return response.status, json.loads(raw) if raw else {}
 
 
-def test_board_api_queue_and_command(tmp_path: Path) -> None:
+def test_board_api_goals_save_post(tmp_path: Path) -> None:
     config = _config(tmp_path)
     server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
     port = server.server_address[1]
@@ -71,20 +75,83 @@ def test_board_api_queue_and_command(tmp_path: Path) -> None:
     thread.start()
 
     try:
-        status, data = _request(port, "POST", "/api/tasks/TASK-001/queue", {})
+        status, goals = _request(
+            port,
+            "POST",
+            "/api/goals/save",
+            {"content": "# Goals\n\n## Personal\n\n- Updated goal line\n"},
+        )
         assert status == 200
-        assert data["ok"] is True
+        assert goals["ok"] is True
+        assert "Updated goal line" in goals["goals"]["content"]
+        assert config.goals_file.read_text(encoding="utf-8").count("Updated goal line") == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_board_api_preview_queue_and_command(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        status, preview = _request(
+            port,
+            "POST",
+            "/api/tasks/TASK-001/preview",
+            {"goals_content": "# Goals\n\n## Personal\n\n- Build a study planner app.\n"},
+        )
+        assert status == 200
+        assert preview["prompt_text"]
+        assert "TASK-001" in preview["prompt_text"]
+
+        status, data = _request(
+            port,
+            "POST",
+            "/api/tasks/TASK-001/queue",
+            {"goals_content": "# Goals\n\n## Personal\n\n- Build a study planner app.\n"},
+        )
+        assert status == 200
         assert data["task"]["status"] == "queued"
+        assert data["prompt_text"]
 
         status, cmd = _request(port, "GET", "/api/tasks/TASK-001/command")
         assert status == 200
+        assert cmd["prompt_text"]
         assert "openclaw agent" in cmd["bash"]
-        assert "logs/worker-queue/TASK-001.prompt.txt" in cmd["bash"]
         assert len(cmd["bash"]) < 500
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
-        status, goals = _request(port, "PUT", "/api/goals", {"content": "# Goals\n\n- Updated goal\n"})
+
+def test_board_api_plan_tasks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.backlog_file.write_text("tasks: []\n", encoding="utf-8")
+    server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        status, result = _request(
+            port,
+            "POST",
+            "/api/plan",
+            {
+                "goals_content": (
+                    "# Goals\n\n## Personal\n\n- Build a study planner app.\n\n"
+                    "## Overnight App Ideas\n\n- Habit tracker demo.\n"
+                ),
+            },
+        )
         assert status == 200
-        assert "Updated goal" in goals["goals"]["content"]
+        assert result["added_count"] >= 1
     finally:
         server.shutdown()
         server.server_close()

@@ -18,6 +18,8 @@ from ..task_manager import (
     cancel_task,
     complete_task,
     delete_task_entry,
+    plan_tasks_for_board,
+    preview_task_prompt,
     queue_task,
     read_goals,
     show_task,
@@ -64,6 +66,16 @@ class BoardHandler(BaseHTTPRequestHandler):
             return {}
         return data if isinstance(data, dict) else {}
 
+    def _handle_save_goals(self, body: dict[str, Any]) -> None:
+        content = body.get("content")
+        if content is None or not isinstance(content, str):
+            return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Missing goals content."})
+        _ok, detail = write_goals(self.config, content)
+        return self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "detail": detail, "goals": read_goals(self.config)},
+        )
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -104,12 +116,7 @@ class BoardHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
 
         if path == "/api/goals":
-            body = self._read_json_body()
-            content = body.get("content")
-            if content is None or not isinstance(content, str):
-                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Missing goals content."})
-            ok, detail = write_goals(self.config, content)
-            return self._send_json(HTTPStatus.OK, {"ok": ok, "detail": detail, "goals": read_goals(self.config)})
+            return self._handle_save_goals(self._read_json_body())
 
         if path.startswith("/api/tasks/"):
             task_id = path.removeprefix("/api/tasks/").split("/", 1)[0].upper()
@@ -132,6 +139,21 @@ class BoardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        body = self._read_json_body()
+
+        if path in {"/api/goals", "/api/goals/save"}:
+            return self._handle_save_goals(body)
+
+        if path == "/api/plan":
+            result = plan_tasks_for_board(
+                self.config,
+                goals_content=body.get("goals_content"),
+                allow_repeat=bool(body.get("allow_repeat", False)),
+            )
+            if not result.get("ok"):
+                return self._send_json(HTTPStatus.BAD_REQUEST, result)
+            return self._send_json(HTTPStatus.OK, result)
+
         if not path.startswith("/api/tasks/"):
             return self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found."})
 
@@ -142,15 +164,37 @@ class BoardHandler(BaseHTTPRequestHandler):
 
         task_id = parts[0].upper()
         action = parts[1].lower() if len(parts) > 1 else ""
-        body = self._read_json_body()
+        goals_content = body.get("goals_content")
         remove_prompt = bool(body.get("remove_prompt", True))
 
+        if action == "preview":
+            ok, detail, prompt_text = preview_task_prompt(
+                self.config,
+                task_id,
+                goals_content=goals_content,
+            )
+            if not ok:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+            return self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "detail": detail, "task_id": task_id, "prompt_text": prompt_text},
+            )
+
         if action == "queue":
-            ok, detail = queue_task(self.config, task_id)
+            ok, detail = queue_task(self.config, task_id, goals_content=goals_content)
             if not ok:
                 return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
             task = show_task(self.config, task_id)
-            return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
+            commands = build_openclaw_commands(self.config, task_id) or {}
+            return self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "detail": detail,
+                    "task": task,
+                    "prompt_text": commands.get("prompt_text", ""),
+                },
+            )
 
         if action == "complete":
             ok, detail = complete_task(self.config, task_id, remove_prompt=remove_prompt)

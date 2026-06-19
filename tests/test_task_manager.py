@@ -12,6 +12,8 @@ from overnight_app_maker.task_manager import (
     complete_task,
     delete_task_entry,
     list_task_views,
+    plan_tasks_for_board,
+    preview_task_prompt,
     queue_prompt_path,
     queue_task,
     read_goals,
@@ -115,6 +117,46 @@ def test_build_openclaw_commands_uses_prompt_file_not_inline(tmp_path: Path) -> 
     assert long_prompt not in commands["bash"]
     assert "Get-Content" in commands["powershell"]
     assert "overnight-task-006" in commands["session_key"]
+    assert "Do the work" in commands["prompt_text"]
+    assert len(commands["prompt_text"]) > 20
+
+
+def test_preview_task_prompt_uses_editor_goals(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [
+            {
+                "id": "TASK-008",
+                "title": "Advance goal: My custom goal",
+                "description": "Work on it.",
+                "output_dir": "reports",
+                "status": "todo",
+                "phase": "plan",
+            }
+        ],
+    )
+    ok, _, prompt = preview_task_prompt(
+        config,
+        "TASK-008",
+        goals_content="# Goals\n\n## Personal\n\n- My custom goal for class.\n",
+    )
+    assert ok
+    assert "My custom goal" in prompt
+    assert config.goals_file.read_text(encoding="utf-8").startswith("# Goals")
+
+
+def test_plan_tasks_for_board_adds_todo_items(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    goals = (
+        "# Goals\n\n## Personal\n\n- Build a habit tracker for students.\n\n"
+        "## Overnight App Ideas\n\n- Morning routine checklist app.\n"
+    )
+    result = plan_tasks_for_board(config, goals_content=goals)
+    assert result["ok"] is True
+    assert result["added_count"] >= 1
+    views = list_task_views(config, status_filter="todo")
+    assert len(views) >= 1
 
 
 def test_queue_task_writes_prompt_and_updates_status(tmp_path: Path) -> None:

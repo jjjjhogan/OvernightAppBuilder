@@ -13,161 +13,87 @@
       --muted: #8b9cb3;
       --accent: #5b9fd4;
       --danger: #e06c75;
+      --ok: #98c379;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
     header {
-      padding: 1rem 1.25rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      align-items: center;
-      justify-content: space-between;
-      background: #121820;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; background: #121820;
     }
     header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
     header .meta { color: var(--muted); font-size: 0.85rem; }
     .header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     button {
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.45rem 0.75rem;
-      cursor: pointer;
-      font-size: 0.85rem;
+      background: var(--panel); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.45rem 0.75rem; cursor: pointer; font-size: 0.85rem;
     }
     button:hover { border-color: var(--accent); }
     button.primary { background: #264a6e; border-color: var(--accent); }
     button.danger { border-color: #7a3a3f; color: #ffd6d8; }
-    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 64px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .layout { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; min-height: calc(100vh - 64px); }
     @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
     .sidebar {
-      border-right: 1px solid var(--border);
-      background: #121820;
-      padding: 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
+      border-right: 1px solid var(--border); background: #121820; padding: 1rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
     }
     .sidebar h2 { margin: 0; font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-    .sidebar .path { font-size: 0.75rem; color: var(--muted); word-break: break-all; }
+    .sidebar .path { font-size: 0.75rem; color: var(--accent); word-break: break-all; font-family: ui-monospace, Consolas, monospace; }
+    .sidebar .status-line { font-size: 0.75rem; min-height: 1rem; }
+    .sidebar .status-line.ok { color: var(--ok); }
+    .sidebar .status-line.err { color: var(--danger); }
     #goals-editor {
-      flex: 1;
-      min-height: 240px;
-      width: 100%;
-      background: #0b1017;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.65rem;
-      font-family: ui-monospace, Consolas, monospace;
-      font-size: 0.8rem;
-      resize: vertical;
+      flex: 1; min-height: 320px; width: 100%; background: #0b1017; color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem;
+      font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; resize: vertical;
     }
+    #goals-editor.dirty { border-color: var(--warn, #e5c07b); }
+    .sidebar-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     .board {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 0.75rem;
-      padding: 1rem;
-      align-items: start;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem; padding: 1rem; align-items: start;
     }
-    .column {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      min-height: 120px;
-    }
+    .column { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-height: 120px; }
     .column h2 {
-      margin: 0;
-      padding: 0.65rem 0.75rem;
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
+      margin: 0; padding: 0.65rem 0.75rem; font-size: 0.8rem; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--border);
     }
-    .column .count {
-      float: right;
-      background: #243044;
-      padding: 0.1rem 0.45rem;
-      border-radius: 999px;
-      font-size: 0.75rem;
-    }
+    .column .count { float: right; background: #243044; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.75rem; }
     .cards { padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
-    .card {
-      background: #121820;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.65rem 0.7rem;
-    }
+    .card { background: #121820; border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 0.7rem; }
     .card-id { font-size: 0.75rem; color: var(--accent); font-weight: 600; }
     .card-title { font-size: 0.9rem; margin: 0.25rem 0 0.5rem; line-height: 1.35; }
     .card-meta { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.5rem; }
     .card-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
     .card-actions button { padding: 0.3rem 0.5rem; font-size: 0.75rem; }
     #toast {
-      position: fixed;
-      bottom: 1rem;
-      right: 1rem;
-      background: #243044;
-      border: 1px solid var(--border);
-      padding: 0.65rem 0.9rem;
-      border-radius: 8px;
-      display: none;
-      max-width: 420px;
-      font-size: 0.85rem;
-      z-index: 20;
+      position: fixed; bottom: 1rem; right: 1rem; background: #243044; border: 1px solid var(--border);
+      padding: 0.65rem 0.9rem; border-radius: 8px; display: none; max-width: 420px; font-size: 0.85rem; z-index: 30;
     }
-    #modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.55);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 1rem;
-      z-index: 10;
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none;
+      align-items: center; justify-content: center; padding: 1rem; z-index: 10;
     }
-    #modal .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      max-width: 720px;
-      width: 100%;
-      padding: 1rem;
-      max-height: 90vh;
-      overflow: auto;
+    .modal-panel {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      width: min(1100px, 96vw); max-height: 92vh; overflow: auto; padding: 1rem;
     }
-    #modal pre {
-      background: #0b1017;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.75rem;
-      overflow: auto;
-      max-height: 120px;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-word;
+    .modal-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 800px) { .modal-split { grid-template-columns: 1fr; } }
+    .modal-panel h3 { margin: 0 0 0.5rem; }
+    .modal-panel pre, .prompt-box {
+      background: #0b1017; border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem;
+      overflow: auto; max-height: 50vh; font-size: 0.78rem; white-space: pre-wrap; word-break: break-word;
+      font-family: ui-monospace, Consolas, monospace; margin: 0;
     }
     .empty { color: var(--muted); font-size: 0.85rem; padding: 0.5rem; }
     .error-banner {
-      background: #4a2024;
-      border: 1px solid #7a3a3f;
-      color: #ffd6d8;
-      padding: 0.75rem 1rem;
-      margin: 1rem;
-      border-radius: 8px;
-      display: none;
+      background: #4a2024; border: 1px solid #7a3a3f; color: #ffd6d8;
+      padding: 0.75rem 1rem; margin: 1rem; border-radius: 8px; display: none;
     }
     .hint { font-size: 0.75rem; color: var(--muted); margin: 0.25rem 0 0.5rem; }
+    .modal-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -177,47 +103,71 @@
       <div class="meta" id="meta">Loading…</div>
     </div>
     <div class="header-actions">
-      <button class="primary" id="refresh">Refresh board</button>
+      <button class="primary" id="refresh">Refresh</button>
     </div>
   </header>
   <div class="error-banner" id="error"></div>
   <div class="layout">
     <aside class="sidebar">
-      <h2>Goals</h2>
-      <div class="path" id="goals-path">…</div>
-      <textarea id="goals-editor" placeholder="# Goals&#10;&#10;- Your goal bullets here"></textarea>
-      <button class="primary" id="save-goals">Save goals</button>
-      <p class="hint">Edit goals here, then queue tasks from the To Do column.</p>
+      <h2>Goals file</h2>
+      <div class="path" id="goals-path">goals/GOALS.example.md</div>
+      <textarea id="goals-editor" spellcheck="false"></textarea>
+      <div class="sidebar-actions">
+        <button class="primary" id="save-goals">Save goals</button>
+        <button id="plan-tasks">Plan tasks</button>
+      </div>
+      <div class="status-line" id="goals-status"></div>
+      <p class="hint">Replace Example: bullets with your real goals, save, then Plan tasks. Queue moves a task to the prompt column.</p>
     </aside>
     <main class="board" id="board"></main>
   </div>
   <div id="toast"></div>
-  <div id="modal">
-    <div class="panel">
-      <h3>OpenClaw command</h3>
-      <p class="hint">Run in your terminal to execute manually and watch token usage. Copies the command below — not the prompt file contents.</p>
-      <p id="cmd-platform-label"><strong>Command</strong></p>
-      <pre id="cmd-primary"></pre>
-      <p class="hint" id="cmd-alt-label"></p>
-      <pre id="cmd-alt" style="display:none;"></pre>
-      <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
-        <button class="primary" id="copy-cmd">Copy command</button>
-        <button id="modal-close">Close</button>
+
+  <div class="modal-overlay" id="queue-modal">
+    <div class="modal-panel">
+      <h3 id="queue-modal-title">Review worker prompt</h3>
+      <p class="hint">This is the full AI brief that will be written to the queue. Save goals first if you edited them.</p>
+      <pre class="prompt-box" id="queue-prompt-text"></pre>
+      <div class="modal-actions">
+        <button class="primary" id="confirm-queue">Confirm queue</button>
+        <button id="cancel-queue">Cancel</button>
       </div>
     </div>
   </div>
+
+  <div class="modal-overlay" id="run-modal">
+    <div class="modal-panel">
+      <h3>Run task manually</h3>
+      <p class="hint">Copy a command for your OS. The worker prompt is shown on the right for review before you run OpenClaw.</p>
+      <div class="modal-split">
+        <div>
+          <p id="cmd-platform-label"><strong>Command</strong></p>
+          <pre id="cmd-primary"></pre>
+          <p class="hint" id="cmd-alt-label"></p>
+          <pre id="cmd-alt" style="display:none;"></pre>
+          <div class="modal-actions">
+            <button class="primary" id="copy-cmd">Copy command</button>
+            <button id="run-modal-close">Close</button>
+          </div>
+        </div>
+        <div>
+          <p><strong>Worker prompt</strong></p>
+          <pre class="prompt-box" id="run-prompt-text"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const COLUMN_LABELS = {
-      todo: "To Do",
-      queued: "Queued",
-      in_progress: "In Progress",
-      done: "Done",
-      failed: "Failed",
-      cancelled: "Cancelled",
+      todo: "To Do", queued: "Queued", in_progress: "In Progress",
+      done: "Done", failed: "Failed", cancelled: "Cancelled",
     };
-
     const isWindows = navigator.platform.toLowerCase().includes("win");
-    let lastCommand = { primary: "", alt: "", altLabel: "" };
+
+    let lastCommand = { primary: "", alt: "" };
+    let savedGoalsContent = "";
+    let pendingQueueTaskId = null;
 
     const boardEl = document.getElementById("board");
     const metaEl = document.getElementById("meta");
@@ -225,11 +175,27 @@
     const toastEl = document.getElementById("toast");
     const goalsEditor = document.getElementById("goals-editor");
     const goalsPathEl = document.getElementById("goals-path");
+    const goalsStatusEl = document.getElementById("goals-status");
 
     function showToast(message) {
       toastEl.textContent = message;
       toastEl.style.display = "block";
-      setTimeout(() => { toastEl.style.display = "none"; }, 4000);
+      setTimeout(() => { toastEl.style.display = "none"; }, 4500);
+    }
+
+    function setGoalsStatus(message, isError = false) {
+      goalsStatusEl.textContent = message;
+      goalsStatusEl.className = "status-line " + (isError ? "err" : "ok");
+    }
+
+    function markGoalsDirty() {
+      const dirty = goalsEditor.value !== savedGoalsContent;
+      goalsEditor.classList.toggle("dirty", dirty);
+      if (dirty) setGoalsStatus("Unsaved changes");
+    }
+
+    function goalsPayload() {
+      return { goals_content: goalsEditor.value };
     }
 
     async function api(path, options = {}) {
@@ -238,25 +204,54 @@
         ...options,
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (!res.ok) throw new Error(data.error || data.detail || res.statusText);
       return data;
     }
 
     async function loadGoals() {
       const data = await api("/api/goals");
-      goalsPathEl.textContent = data.path;
+      goalsPathEl.textContent = data.path || "goals/GOALS.example.md";
       goalsEditor.value = data.content || "";
+      savedGoalsContent = goalsEditor.value;
+      goalsEditor.classList.remove("dirty");
+      setGoalsStatus(data.exists ? "Loaded" : "File will be created on save");
     }
 
     async function saveGoals() {
       try {
-        const data = await api("/api/goals", {
-          method: "PUT",
+        const data = await api("/api/goals/save", {
+          method: "POST",
           body: JSON.stringify({ content: goalsEditor.value }),
         });
+        savedGoalsContent = data.goals.content;
+        goalsEditor.classList.remove("dirty");
+        setGoalsStatus(data.detail || "Goals saved.");
         showToast(data.detail || "Goals saved.");
-        goalsEditor.value = data.goals.content;
       } catch (err) {
+        setGoalsStatus(err.message, true);
+        showToast("Save failed: " + err.message);
+      }
+    }
+
+    async function planTasks() {
+      try {
+        const data = await api("/api/plan", {
+          method: "POST",
+          body: JSON.stringify({ ...goalsPayload(), allow_repeat: false }),
+        });
+        if (data.goals_content !== undefined) {
+          savedGoalsContent = goalsEditor.value;
+          goalsEditor.classList.remove("dirty");
+        }
+        let msg = `Planned ${data.planned_count}, added ${data.added_count} to backlog.`;
+        if (data.blockers && data.blockers.length) {
+          msg += " " + data.blockers.filter(l => l.includes("eligible")).join(" ");
+        }
+        showToast(msg);
+        setGoalsStatus(msg);
+        await loadBoard();
+      } catch (err) {
+        setGoalsStatus(err.message, true);
         showToast(err.message);
       }
     }
@@ -269,7 +264,7 @@
         <div class="card-title">${escapeHtml(task.title)}</div>
         <div class="card-meta">
           ${task.phase ? `Phase: ${escapeHtml(task.phase)} · ` : ""}
-          ${task.has_prompt ? "Prompt ready" : "No prompt file"}
+          ${task.has_prompt ? "Prompt ready" : "Not queued yet"}
         </div>
         <div class="card-actions"></div>
       `;
@@ -279,15 +274,15 @@
         const queueBtn = document.createElement("button");
         queueBtn.className = "primary";
         queueBtn.textContent = "Queue";
-        queueBtn.addEventListener("click", () => act(task.id, "queue"));
+        queueBtn.addEventListener("click", () => openQueuePreview(task.id));
         actions.appendChild(queueBtn);
       }
 
       if (task.has_prompt) {
-        const cmdBtn = document.createElement("button");
-        cmdBtn.textContent = "Copy command";
-        cmdBtn.addEventListener("click", () => showCommand(task.id));
-        actions.appendChild(cmdBtn);
+        const runBtn = document.createElement("button");
+        runBtn.textContent = "Run command";
+        runBtn.addEventListener("click", () => showRunCommand(task.id));
+        actions.appendChild(runBtn);
       }
 
       if (task.status !== "done" && task.status !== "cancelled") {
@@ -325,7 +320,7 @@
       try {
         const data = await api(`/api/tasks/${taskId}/${action}`, {
           method: "POST",
-          body: JSON.stringify({ remove_prompt: action === "cancel" }),
+          body: JSON.stringify({ remove_prompt: action === "cancel", ...goalsPayload() }),
         });
         showToast(data.detail || "Updated.");
         await loadBoard();
@@ -344,15 +339,52 @@
       }
     }
 
+    async function openQueuePreview(taskId) {
+      try {
+        pendingQueueTaskId = taskId;
+        document.getElementById("queue-modal-title").textContent = `Review prompt for ${taskId}`;
+        document.getElementById("queue-prompt-text").textContent = "Generating preview…";
+        document.getElementById("queue-modal").style.display = "flex";
+        const data = await api(`/api/tasks/${taskId}/preview`, {
+          method: "POST",
+          body: JSON.stringify(goalsPayload()),
+        });
+        document.getElementById("queue-prompt-text").textContent = data.prompt_text || "(empty prompt)";
+      } catch (err) {
+        document.getElementById("queue-modal").style.display = "none";
+        showToast(err.message);
+      }
+    }
+
+    async function confirmQueue() {
+      if (!pendingQueueTaskId) return;
+      const taskId = pendingQueueTaskId;
+      try {
+        const data = await api(`/api/tasks/${taskId}/queue`, {
+          method: "POST",
+          body: JSON.stringify(goalsPayload()),
+        });
+        savedGoalsContent = goalsEditor.value;
+        goalsEditor.classList.remove("dirty");
+        document.getElementById("queue-modal").style.display = "none";
+        pendingQueueTaskId = null;
+        showToast(data.detail || "Queued.");
+        await loadBoard();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
     async function copyText(text) {
-      if (navigator.clipboard && text) {
+      if (!text) return false;
+      if (navigator.clipboard) {
         await navigator.clipboard.writeText(text);
         return true;
       }
       return false;
     }
 
-    async function showCommand(taskId) {
+    async function showRunCommand(taskId) {
       try {
         const data = await api(`/api/tasks/${taskId}/command`);
         const primary = isWindows ? data.powershell : data.bash;
@@ -361,18 +393,15 @@
         const altLabel = isWindows ? "Bash / Mac (alternate)" : "PowerShell / Windows (alternate)";
 
         document.getElementById("cmd-platform-label").innerHTML = `<strong>${primaryLabel}</strong>`;
-        document.getElementById("cmd-primary").textContent = primary || "(unavailable)";
+        document.getElementById("cmd-primary").textContent = primary || "(unavailable — queue the task first)";
         document.getElementById("cmd-alt-label").textContent = alt ? altLabel : "";
         const altEl = document.getElementById("cmd-alt");
         altEl.style.display = alt ? "block" : "none";
         altEl.textContent = alt || "";
+        document.getElementById("run-prompt-text").textContent = data.prompt_text || "(no prompt text)";
 
-        lastCommand = { primary, alt, altLabel };
-        document.getElementById("modal").style.display = "flex";
-
-        if (primary && await copyText(primary)) {
-          showToast(`Copied ${primaryLabel} command to clipboard.`);
-        }
+        lastCommand = { primary, alt };
+        document.getElementById("run-modal").style.display = "flex";
       } catch (err) {
         showToast(err.message);
       }
@@ -411,10 +440,17 @@
       }
     }
 
+    goalsEditor.addEventListener("input", markGoalsDirty);
     document.getElementById("refresh").addEventListener("click", () => { loadBoard(); loadGoals(); });
     document.getElementById("save-goals").addEventListener("click", saveGoals);
-    document.getElementById("modal-close").addEventListener("click", () => {
-      document.getElementById("modal").style.display = "none";
+    document.getElementById("plan-tasks").addEventListener("click", planTasks);
+    document.getElementById("confirm-queue").addEventListener("click", confirmQueue);
+    document.getElementById("cancel-queue").addEventListener("click", () => {
+      pendingQueueTaskId = null;
+      document.getElementById("queue-modal").style.display = "none";
+    });
+    document.getElementById("run-modal-close").addEventListener("click", () => {
+      document.getElementById("run-modal").style.display = "none";
     });
     document.getElementById("copy-cmd").addEventListener("click", async () => {
       if (lastCommand.primary && await copyText(lastCommand.primary)) {
@@ -424,7 +460,7 @@
 
     loadGoals();
     loadBoard();
-    setInterval(loadBoard, 15000);
+    setInterval(loadBoard, 20000);
   </script>
 </body>
 </html>

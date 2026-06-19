@@ -11,7 +11,10 @@ def load_goals(path: Path) -> str:
 
 def save_goals(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    normalized = content.replace("\r\n", "\n")
+    if normalized and not normalized.endswith("\n"):
+        normalized += "\n"
+    path.write_text(normalized, encoding="utf-8")
 
 
 def goals_view(path: Path, project_root: Path) -> dict[str, str]:

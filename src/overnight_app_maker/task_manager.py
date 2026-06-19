@@ -14,11 +14,12 @@ from .backlog import (
     update_task_fields,
     update_task_status,
 )
+from .backlog import merge_planned_tasks
 from .config import AppConfig
 from .goals import goals_view, load_goals, save_goals
 from .models import PlannedTask
 from .openclaw_adapter import queue_worker_prompt
-from .planner import _find_latest_planning_artifact, build_worker_prompt
+from .planner import _find_latest_planning_artifact, build_worker_prompt, explain_planning_blockers, plan_daily_tasks
 from .tasks_log import append_completion
 
 DEFAULT_QUEUE_DIR = "logs/worker-queue"
@@ -185,7 +186,94 @@ def complete_task(
     return True, detail
 
 
-def queue_task(config: AppConfig, task_id: str) -> tuple[bool, str]:
+def _resolve_goals_text(config: AppConfig, goals_content: str | None = None) -> str:
+    if goals_content is not None:
+        save_goals(config.goals_file, goals_content)
+        return goals_content.strip()
+    return load_goals(config.goals_file)
+
+
+def _build_prompt_for_task(
+    config: AppConfig,
+    task_dict: dict[str, Any],
+    *,
+    goals_content: str | None = None,
+) -> str:
+    goals = _resolve_goals_text(config, goals_content)
+    planned = planned_task_from_backlog(task_dict)
+    worker_instructions = _load_worker_instructions(config.worker_instructions_file)
+    return resolve_worker_prompt(
+        task=planned,
+        goals=goals,
+        worker_instructions=worker_instructions,
+        project_root=config.project_root,
+    )
+
+
+def preview_task_prompt(
+    config: AppConfig,
+    task_id: str,
+    *,
+    goals_content: str | None = None,
+) -> tuple[bool, str, str]:
+    task_dict = get_task(config.backlog_file, task_id)
+    if not task_dict:
+        return False, f"Task {task_id} not found.", ""
+    status = normalize_status(str(task_dict.get("status", "todo")))
+    if status in {"done", "cancelled"}:
+        return False, f"Cannot preview {task_id} with status {status}.", ""
+    try:
+        prompt = _build_prompt_for_task(config, task_dict, goals_content=goals_content)
+    except FileNotFoundError as exc:
+        return False, str(exc), ""
+    return True, f"Preview ready for {task_id}.", prompt
+
+
+def plan_tasks_for_board(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+    allow_repeat: bool = False,
+) -> dict[str, Any]:
+    try:
+        goals = _resolve_goals_text(config, goals_content)
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc), "added_count": 0, "planned_count": 0, "blockers": []}
+
+    worker_instructions = _load_worker_instructions(config.worker_instructions_file)
+    tasks = plan_daily_tasks(
+        goals,
+        max_tasks=config.max_daily_tasks,
+        tasks_log_path=config.tasks_log_file,
+        backlog_path=config.backlog_file,
+        worker_instructions=worker_instructions,
+        project_root=config.project_root,
+        allow_repeat=allow_repeat,
+    )
+    added = merge_planned_tasks(config.backlog_file, tasks) if tasks else []
+    blockers: list[str] = []
+    if len(tasks) == 0:
+        blockers = explain_planning_blockers(
+            goals,
+            tasks_log_path=config.tasks_log_file,
+            backlog_path=config.backlog_file,
+            project_root=config.project_root,
+        )
+    return {
+        "ok": True,
+        "planned_count": len(tasks),
+        "added_count": len(added),
+        "added_titles": [task.title for task in added],
+        "blockers": blockers,
+    }
+
+
+def queue_task(
+    config: AppConfig,
+    task_id: str,
+    *,
+    goals_content: str | None = None,
+) -> tuple[bool, str]:
     """Write worker prompt file and mark backlog task as queued (same as --mode queue for one task)."""
     queue_dir = queue_dir_for_config(config)
     task_dict = get_task(config.backlog_file, task_id)
@@ -197,19 +285,11 @@ def queue_task(config: AppConfig, task_id: str) -> tuple[bool, str]:
         return False, f"Cannot queue {task_id} with status {status}."
 
     try:
-        goals = load_goals(config.goals_file)
+        prompt = _build_prompt_for_task(config, task_dict, goals_content=goals_content)
     except FileNotFoundError as exc:
         return False, str(exc)
 
     planned = planned_task_from_backlog(task_dict)
-    worker_instructions = _load_worker_instructions(config.worker_instructions_file)
-    prompt = resolve_worker_prompt(
-        task=planned,
-        goals=goals,
-        worker_instructions=worker_instructions,
-        project_root=config.project_root,
-    )
-
     output_path = config.project_root / planned.output_dir
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -227,7 +307,8 @@ def queue_task(config: AppConfig, task_id: str) -> tuple[bool, str]:
         output_dir=planned.output_dir,
     )
     rel_path = queue_prompt_path(config.project_root, task_id, queue_dir).relative_to(config.project_root).as_posix()
-    return True, f"Queued {task_id}. Prompt written to {rel_path}. ({result.detail})"
+    saved_note = " Goals saved." if goals_content is not None else ""
+    return True, f"Queued {task_id}. Prompt written to {rel_path}.{saved_note} ({result.detail})"
 
 
 def update_task_details(
@@ -250,9 +331,14 @@ def update_task_details(
     return True, f"Updated {task_id}."
 
 
-def read_goals(config: AppConfig) -> dict[str, str]:
+def read_goals(config: AppConfig) -> dict[str, Any]:
     data = goals_view(config.goals_file, config.project_root)
-    return {"path": data["path"], "content": data["content"], "exists": data["exists"] == "true"}
+    return {
+        "path": data["path"],
+        "absolute_path": str(config.goals_file.resolve()),
+        "content": data["content"],
+        "exists": data["exists"] == "true",
+    }
 
 
 def write_goals(config: AppConfig, content: str) -> tuple[bool, str]:
@@ -286,6 +372,14 @@ def build_openclaw_commands(
     session_key = f"overnight-{task_id.lower()}"
     agent = config.openclaw_agent_id
 
+    prompt_text = ""
+    if prompt_path.exists():
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+    else:
+        task = get_task(config.backlog_file, task_id)
+        if task:
+            prompt_text = str(task.get("worker_prompt", "")).strip()
+
     if prompt_path.exists():
         bash = (
             f'openclaw agent --agent {agent} --session-key {session_key} '
@@ -296,30 +390,33 @@ def build_openclaw_commands(
             f'openclaw agent --agent {agent} --session-key {session_key} '
             f'--message "$(Get-Content {ps_path} -Raw)"'
         )
-        preview = prompt_path.read_text(encoding="utf-8")
-        preview = preview[:200] + ("..." if len(preview) > 200 else "")
         return {
             "bash": bash,
             "powershell": powershell,
             "session_key": session_key,
             "prompt_path": rel_prompt,
-            "prompt_preview": preview,
+            "prompt_text": prompt_text,
         }
 
-    task = get_task(config.backlog_file, task_id)
-    if not task:
-        return None
-    worker_prompt = str(task.get("worker_prompt", "")).strip()
-    if not worker_prompt:
-        return None
+    if not prompt_text:
+        task = get_task(config.backlog_file, task_id)
+        if not task:
+            return None
+        return {
+            "bash": "",
+            "powershell": "",
+            "session_key": session_key,
+            "prompt_path": "",
+            "prompt_text": "",
+            "error": f"No prompt file at {rel_prompt}. Click Queue on the board first.",
+        }
 
-    preview = worker_prompt[:200] + ("..." if len(worker_prompt) > 200 else "")
     return {
         "bash": "",
         "powershell": "",
         "session_key": session_key,
         "prompt_path": "",
-        "prompt_preview": preview,
+        "prompt_text": prompt_text,
         "error": f"No prompt file at {rel_prompt}. Click Queue on the board first.",
     }
 

@@ -29,7 +29,16 @@ After queue mode creates tasks, manage them in a local board or from the termina
 ```powershell
 # Local Kanban UI (http://127.0.0.1:8765)
 python -m overnight_app_maker board
+```
 
+Workflow on the board:
+
+1. Edit **goals/GOALS.example.md** in the left panel (replace `Example:` bullets with real goals) and click **Save goals**
+2. Click **Plan tasks** to create To Do items from your goals
+3. Click **Queue** on a task to preview the worker prompt, then confirm
+4. Click **Run command** on queued tasks to copy the OpenClaw command and review the full prompt
+
+```powershell
 # CLI backup if the board is unavailable
 python -m overnight_app_maker tasks list
 python -m overnight_app_maker tasks queue TASK-002
