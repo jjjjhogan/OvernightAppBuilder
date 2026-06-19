@@ -1,52 +1,125 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 from .backlog import merge_planned_tasks
+from .board import run_board_server
 from .config import load_config
 from .goals import load_goals
 from .planner import explain_planning_blockers, plan_daily_tasks
 from .runner import run_tasks
+from .task_manager import (
+    build_openclaw_commands,
+    cancel_task,
+    complete_task,
+    delete_task_entry,
+    format_task_detail,
+    format_task_list,
+    list_task_views,
+    show_task,
+)
+
+
+def _add_shared_config_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", help="Path to settings YAML (defaults to config/settings.yml or example).")
+    parser.add_argument("--project-root", help="Project root directory (defaults to current working directory).")
+
+
+def _resolve_config(args: argparse.Namespace) -> "AppConfig":
+    from .config import AppConfig
+
+    project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd().resolve()
+    config_path = Path(args.config).resolve() if args.config else None
+    goals_override = Path(args.goals).resolve() if getattr(args, "goals", None) else None
+    return load_config(project_root=project_root, config_path=config_path, goals_override=goals_override)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Plan and run autonomous daily tasks from a goals file.")
-    parser.add_argument("--goals", help="Path to the goals markdown file.")
-    parser.add_argument("--config", help="Path to settings YAML (defaults to config/settings.yml or example).")
-    parser.add_argument("--project-root", help="Project root directory (defaults to current working directory).")
-    parser.add_argument("--max-tasks", type=int, help="Maximum number of tasks to plan.")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Plan and run autonomous daily tasks from a goals file.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    plan_parser = subparsers.add_parser("plan", help="Plan and run tasks from a goals file (default).")
+    plan_parser.add_argument("--goals", help="Path to the goals markdown file.")
+    _add_shared_config_args(plan_parser)
+    plan_parser.add_argument("--max-tasks", type=int, help="Maximum number of tasks to plan.")
+    plan_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned tasks without executing them or writing backlog updates.",
     )
-    parser.add_argument(
+    plan_parser.add_argument(
         "--no-write-backlog",
         action="store_true",
         help="Skip writing newly planned tasks to backlog/tasks.yml.",
     )
-    parser.add_argument(
+    plan_parser.add_argument(
         "--mode",
         choices=["queue", "openclaw"],
         help="Execution mode override (queue writes prompt files; openclaw runs workers).",
     )
-    parser.add_argument(
+    plan_parser.add_argument(
         "--allow-repeat",
         action="store_true",
         help="Allow replanning task titles already listed in memory/tasks-log.md.",
     )
+
+    board_parser = subparsers.add_parser("board", help="Start the local Kanban board UI.")
+    _add_shared_config_args(board_parser)
+    board_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1).")
+    board_parser.add_argument("--port", type=int, default=8765, help="Port to bind (default: 8765).")
+    board_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not open a browser tab automatically.",
+    )
+
+    tasks_parser = subparsers.add_parser("tasks", help="Manage backlog tasks from the CLI.")
+    _add_shared_config_args(tasks_parser)
+    tasks_sub = tasks_parser.add_subparsers(dest="tasks_command", required=True)
+
+    list_parser = tasks_sub.add_parser("list", help="List backlog tasks.")
+    list_parser.add_argument("--status", help="Filter by status (todo, queued, done, cancelled, etc.).")
+
+    show_parser = tasks_sub.add_parser("show", help="Show one task by id.")
+    show_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+
+    cancel_parser = tasks_sub.add_parser("cancel", help="Mark a task cancelled and optionally remove its prompt file.")
+    cancel_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+    cancel_parser.add_argument(
+        "--keep-prompt",
+        action="store_true",
+        help="Keep the queued prompt file on disk.",
+    )
+
+    delete_parser = tasks_sub.add_parser("delete", help="Remove a task from the backlog.")
+    delete_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+    delete_parser.add_argument(
+        "--keep-prompt",
+        action="store_true",
+        help="Keep the queued prompt file on disk.",
+    )
+
+    complete_parser = tasks_sub.add_parser("complete", help="Mark a task done and append memory/tasks-log.md.")
+    complete_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+    complete_parser.add_argument(
+        "--remove-prompt",
+        action="store_true",
+        help="Delete the queued prompt file after marking complete.",
+    )
+
+    command_parser = tasks_sub.add_parser("command", help="Print manual openclaw agent command for a queued task.")
+    command_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd().resolve()
-    config_path = Path(args.config).resolve() if args.config else None
-    goals_override = Path(args.goals).resolve() if args.goals else None
-
-    config = load_config(project_root=project_root, config_path=config_path, goals_override=goals_override)
+def _run_plan(args: argparse.Namespace) -> None:
+    config = _resolve_config(args)
     if args.max_tasks is not None:
         config = replace(config, max_daily_tasks=args.max_tasks)
     if args.mode is not None:
@@ -94,6 +167,95 @@ def main() -> None:
     )
     for line in lines:
         print(line)
+
+
+def _run_board(args: argparse.Namespace) -> None:
+    config = _resolve_config(args)
+    run_board_server(
+        config,
+        host=args.host,
+        port=args.port,
+        open_browser=not args.no_browser,
+    )
+
+
+def _run_tasks(args: argparse.Namespace) -> None:
+    config = _resolve_config(args)
+    cmd = args.tasks_command
+
+    if cmd == "list":
+        views = list_task_views(config, status_filter=args.status)
+        print(format_task_list(views))
+        return
+
+    task_id = args.task_id.upper()
+
+    if cmd == "show":
+        task = show_task(config, task_id)
+        if not task:
+            print(f"[error] Task {task_id} not found.", file=sys.stderr)
+            raise SystemExit(1)
+        print(format_task_detail(task))
+        return
+
+    if cmd == "cancel":
+        ok, detail = cancel_task(config, task_id, remove_prompt=not args.keep_prompt)
+        if not ok:
+            print(f"[error] {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[ok] {detail}")
+        return
+
+    if cmd == "delete":
+        ok, detail = delete_task_entry(config, task_id, remove_prompt=not args.keep_prompt)
+        if not ok:
+            print(f"[error] {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[ok] {detail}")
+        return
+
+    if cmd == "complete":
+        ok, detail = complete_task(config, task_id, remove_prompt=args.remove_prompt)
+        if not ok:
+            print(f"[error] {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[ok] {detail}")
+        return
+
+    if cmd == "command":
+        commands = build_openclaw_commands(config, task_id)
+        if not commands:
+            print(f"[error] No prompt found for {task_id}. Queue the task first.", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[info] session_key={commands['session_key']}")
+        print("\n# Bash / Mac")
+        print(commands["bash"])
+        print("\n# PowerShell / Windows")
+        print(commands["powershell"])
+        return
+
+    print(f"[error] Unknown tasks command: {cmd}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+
+    if not argv or argv[0].startswith("-"):
+        argv = ["plan", *argv]
+
+    args = parser.parse_args(argv)
+
+    if args.command == "plan":
+        _run_plan(args)
+    elif args.command == "board":
+        _run_board(args)
+    elif args.command == "tasks":
+        _run_tasks(args)
+    else:
+        parser.print_help()
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

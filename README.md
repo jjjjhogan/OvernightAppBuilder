@@ -17,10 +17,32 @@ OvernightAppMaker is a scaffold for an OpenClaw-powered autonomous app maker. Us
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m overnight_app_maker --goals goals/GOALS.example.md --dry-run
+python -m overnight_app_maker plan --goals goals/GOALS.example.md --dry-run
 ```
 
 Copy `goals/GOALS.example.md` to a new file, fill it with your own goals, then point the runner at that file.
+
+## Kanban board and task CLI
+
+After queue mode creates tasks, manage them in a local board or from the terminal:
+
+```powershell
+# Local Kanban UI (http://127.0.0.1:8765)
+python -m overnight_app_maker board
+
+# CLI backup if the board is unavailable
+python -m overnight_app_maker tasks list
+python -m overnight_app_maker tasks command TASK-002
+python -m overnight_app_maker tasks complete TASK-002
+python -m overnight_app_maker tasks cancel TASK-003
+python -m overnight_app_maker tasks delete TASK-004
+```
+
+The default command is still `plan` (same flags as before). Example:
+
+```powershell
+python -m overnight_app_maker --goals goals/GOALS.example.md --mode queue
+```
 
 ## Core Files
 

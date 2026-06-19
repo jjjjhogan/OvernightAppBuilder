@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OvernightAppMaker — Kanban</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9fd4;
+      --danger: #e06c75;
+      --ok: #98c379;
+      --warn: #e5c07b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+      background: #121820;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    header .meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.45rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: #264a6e; border-color: var(--accent); }
+    button.danger { border-color: #7a3a3f; color: #ffd6d8; }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem;
+      padding: 1rem;
+      align-items: start;
+    }
+    .column {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-height: 120px;
+    }
+    .column h2 {
+      margin: 0;
+      padding: 0.65rem 0.75rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .column .count {
+      float: right;
+      background: #243044;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+    }
+    .cards { padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .card {
+      background: #121820;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 0.7rem;
+    }
+    .card-id { font-size: 0.75rem; color: var(--accent); font-weight: 600; }
+    .card-title { font-size: 0.9rem; margin: 0.25rem 0 0.5rem; line-height: 1.35; }
+    .card-meta { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .card-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .card-actions button { padding: 0.3rem 0.5rem; font-size: 0.75rem; }
+    #toast {
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      background: #243044;
+      border: 1px solid var(--border);
+      padding: 0.65rem 0.9rem;
+      border-radius: 8px;
+      display: none;
+      max-width: 360px;
+      font-size: 0.85rem;
+    }
+    #modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    #modal .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 640px;
+      width: 100%;
+      padding: 1rem;
+    }
+    #modal pre {
+      background: #0b1017;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      overflow: auto;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .empty { color: var(--muted); font-size: 0.85rem; padding: 0.5rem; }
+    .error-banner {
+      background: #4a2024;
+      border: 1px solid #7a3a3f;
+      color: #ffd6d8;
+      padding: 0.75rem 1rem;
+      margin: 1rem;
+      border-radius: 8px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>OvernightAppMaker Kanban</h1>
+      <div class="meta" id="meta">Loading…</div>
+    </div>
+    <div>
+      <button class="primary" id="refresh">Refresh</button>
+    </div>
+  </header>
+  <div class="error-banner" id="error"></div>
+  <main class="board" id="board"></main>
+  <div id="toast"></div>
+  <div id="modal">
+    <div class="panel">
+      <h3 id="modal-title">OpenClaw command</h3>
+      <p style="color:var(--muted);font-size:0.85rem;">Run this in your terminal to execute the task manually and watch token usage.</p>
+      <p><strong>Bash / Mac</strong></p>
+      <pre id="cmd-bash"></pre>
+      <p><strong>PowerShell / Windows</strong></p>
+      <pre id="cmd-ps"></pre>
+      <button id="modal-close">Close</button>
+    </div>
+  </div>
+  <script>
+    const COLUMN_LABELS = {
+      todo: "To Do",
+      queued: "Queued",
+      in_progress: "In Progress",
+      done: "Done",
+      failed: "Failed",
+      cancelled: "Cancelled",
+    };
+
+    const boardEl = document.getElementById("board");
+    const metaEl = document.getElementById("meta");
+    const errorEl = document.getElementById("error");
+    const toastEl = document.getElementById("toast");
+
+    function showToast(message) {
+      toastEl.textContent = message;
+      toastEl.style.display = "block";
+      setTimeout(() => { toastEl.style.display = "none"; }, 3500);
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function renderCard(task) {
+      const card = document.createElement("article");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="card-id">${task.id}</div>
+        <div class="card-title">${escapeHtml(task.title)}</div>
+        <div class="card-meta">
+          ${task.phase ? `Phase: ${escapeHtml(task.phase)} · ` : ""}
+          ${task.has_prompt ? "Prompt ready" : "No prompt file"}
+        </div>
+        <div class="card-actions"></div>
+      `;
+      const actions = card.querySelector(".card-actions");
+
+      if (task.has_prompt) {
+        const cmdBtn = document.createElement("button");
+        cmdBtn.textContent = "Copy command";
+        cmdBtn.addEventListener("click", () => showCommand(task.id));
+        actions.appendChild(cmdBtn);
+      }
+
+      if (task.status !== "done" && task.status !== "cancelled") {
+        const completeBtn = document.createElement("button");
+        completeBtn.textContent = "Complete";
+        completeBtn.addEventListener("click", () => act(task.id, "complete"));
+        actions.appendChild(completeBtn);
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", () => act(task.id, "cancel"));
+        actions.appendChild(cancelBtn);
+      }
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "danger";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => {
+        if (confirm(`Delete ${task.id} from backlog?`)) actDelete(task.id);
+      });
+      actions.appendChild(deleteBtn);
+
+      return card;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    async function act(taskId, action) {
+      try {
+        const data = await api(`/api/tasks/${taskId}/${action}`, {
+          method: "POST",
+          body: JSON.stringify({ remove_prompt: action === "cancel" }),
+        });
+        showToast(data.detail || "Updated.");
+        await loadBoard();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    async function actDelete(taskId) {
+      try {
+        const data = await api(`/api/tasks/${taskId}`, { method: "DELETE", body: "{}" });
+        showToast(data.detail || "Deleted.");
+        await loadBoard();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    async function showCommand(taskId) {
+      try {
+        const data = await api(`/api/tasks/${taskId}/command`);
+        document.getElementById("cmd-bash").textContent = data.bash || "";
+        document.getElementById("cmd-ps").textContent = data.powershell || "";
+        document.getElementById("modal").style.display = "flex";
+        if (data.bash && navigator.clipboard) {
+          await navigator.clipboard.writeText(data.bash);
+          showToast("Copied bash command to clipboard.");
+        }
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    function renderBoard(payload) {
+      boardEl.innerHTML = "";
+      metaEl.textContent = `${payload.total} task(s) · ${payload.backlog_file}`;
+      for (const [key, label] of Object.entries(COLUMN_LABELS)) {
+        const col = document.createElement("section");
+        col.className = "column";
+        const tasks = payload.columns[key] || [];
+        col.innerHTML = `<h2>${label}<span class="count">${tasks.length}</span></h2><div class="cards"></div>`;
+        const cards = col.querySelector(".cards");
+        if (!tasks.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No tasks";
+          cards.appendChild(empty);
+        } else {
+          for (const task of tasks) cards.appendChild(renderCard(task));
+        }
+        boardEl.appendChild(col);
+      }
+    }
+
+    async function loadBoard() {
+      errorEl.style.display = "none";
+      try {
+        const payload = await api("/api/board");
+        renderBoard(payload);
+      } catch (err) {
+        errorEl.textContent = `Could not load board: ${err.message}. Use CLI: overnight-app-maker tasks list`;
+        errorEl.style.display = "block";
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadBoard);
+    document.getElementById("modal-close").addEventListener("click", () => {
+      document.getElementById("modal").style.display = "none";
+    });
+
+    loadBoard();
+    setInterval(loadBoard, 15000);
+  </script>
+</body>
+</html>

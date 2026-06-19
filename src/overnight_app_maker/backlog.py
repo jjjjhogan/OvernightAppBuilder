@@ -11,6 +11,7 @@ from .models import PlannedTask
 
 TASK_ID_PATTERN = re.compile(r"^TASK-(\d+)$", re.IGNORECASE)
 OPEN_STATUSES = {"todo", "in_progress", "queued", "running"}
+CLOSED_STATUSES = {"done", "failed", "cancelled", "deleted"}
 STATUS_ALIASES = {
     "in progress": "in_progress",
     "in-progress": "in_progress",
@@ -22,6 +23,10 @@ STATUS_ALIASES = {
     "completed": "done",
     "failed": "failed",
     "error": "failed",
+    "cancel": "cancelled",
+    "cancelled": "cancelled",
+    "canceled": "cancelled",
+    "deleted": "deleted",
 }
 
 
@@ -156,3 +161,40 @@ def update_task_status(path: Path, task_id: str, status: str) -> bool:
     if updated:
         save_backlog(path, tasks)
     return updated
+
+
+def get_task(path: Path, task_id: str) -> dict[str, Any] | None:
+    for task in load_backlog(path):
+        if str(task.get("id")) == task_id:
+            return task
+    return None
+
+
+def delete_task(path: Path, task_id: str) -> bool:
+    tasks = load_backlog(path)
+    remaining = [task for task in tasks if str(task.get("id")) != task_id]
+    if len(remaining) == len(tasks):
+        return False
+    save_backlog(path, remaining)
+    return True
+
+
+def is_open_status(status: str) -> bool:
+    return normalize_status(status) in OPEN_STATUSES
+
+
+def kanban_column(status: str) -> str:
+    normalized = normalize_status(status)
+    if normalized in {"todo"}:
+        return "todo"
+    if normalized in {"queued"}:
+        return "queued"
+    if normalized in {"in_progress", "running"}:
+        return "in_progress"
+    if normalized in {"done"}:
+        return "done"
+    if normalized in {"failed"}:
+        return "failed"
+    if normalized in {"cancelled"}:
+        return "cancelled"
+    return "todo"
