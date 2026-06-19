@@ -523,14 +523,44 @@
 
     async function openTaskFolder(taskId) {
       if (!taskId) return;
+      const actions = ["open-folder", "folder"];
+      for (const action of actions) {
+        try {
+          const data = await api(`/api/tasks/${taskId}/${action}`, {
+            method: "POST",
+            body: "{}",
+          });
+          showToast(data.detail || "Opened folder.");
+          return;
+        } catch (err) {
+          const msg = String(err.message || "");
+          if (!msg.toLowerCase().includes("unknown action")) {
+            showToast(msg);
+            return;
+          }
+        }
+      }
       try {
-        const data = await api(`/api/tasks/${taskId}/open-folder`, {
-          method: "POST",
-          body: "{}",
-        });
-        showToast(data.detail || "Opened folder.");
+        const board = await api("/api/board");
+        const task = await api(`/api/tasks/${taskId}`);
+        const rel = task.output_dir || "reports";
+        const abs = isWindows
+          ? `${board.project_root}\\${rel.replace(/\//g, "\\")}`
+          : `${board.project_root}/${rel}`;
+        if (await copyText(abs)) {
+          showToast(
+            "Board server is outdated — restart it (Ctrl+C, git pull, board again). " +
+            `Copied path: ${abs}`,
+          );
+        } else {
+          showToast(
+            `Restart board after git pull. Open: ${abs}`,
+          );
+        }
       } catch (err) {
-        showToast(err.message);
+        showToast(
+          "Restart the board: Ctrl+C, git pull origin main, python -m overnight_app_maker board",
+        );
       }
     }
 

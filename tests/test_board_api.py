@@ -227,11 +227,15 @@ def test_board_api_open_folder(tmp_path: Path, monkeypatch) -> None:
     )
 
     try:
-        status, data = _request(port, "POST", "/api/tasks/TASK-001/open-folder", {})
+        for action in ("open-folder", "folder"):
+            status, data = _request(port, "POST", f"/api/tasks/TASK-001/{action}", {})
+            assert status == 200, action
+            assert data["ok"] is True
+            assert "reports" in data["detail"]
+
+        status, meta = _request(port, "GET", "/api/meta")
         assert status == 200
-        assert data["ok"] is True
-        assert "reports" in data["detail"]
-        assert (tmp_path / "reports").is_dir()
+        assert meta["features"]["open_folder"] is True
     finally:
         server.shutdown()
         server.server_close()

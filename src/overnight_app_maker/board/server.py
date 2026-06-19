@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from ..config import AppConfig
+from .. import __version__
 from ..task_manager import (
     archive_done_tasks,
     board_payload,
@@ -38,6 +39,7 @@ from ..task_manager import (
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 TASK_ID_PATTERN = re.compile(r"^TASK-\d+$", re.IGNORECASE)
+OPEN_FOLDER_ACTIONS = {"open-folder", "folder", "openfolder"}
 
 
 class BoardServer(ThreadingHTTPServer):
@@ -85,6 +87,15 @@ class BoardHandler(BaseHTTPRequestHandler):
             {"ok": True, "detail": detail, "goals": read_goals(self.config)},
         )
 
+    def _handle_open_folder(self, task_id: str) -> None:
+        ok, detail, folder_path = open_task_output_folder(self.config, task_id)
+        if not ok:
+            return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+        return self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "detail": detail, "folder_path": folder_path},
+        )
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -113,10 +124,25 @@ class BoardHandler(BaseHTTPRequestHandler):
         if path == "/api/goals":
             return self._send_json(HTTPStatus.OK, read_goals(self.config))
 
+        if path == "/api/meta":
+            return self._send_json(
+                HTTPStatus.OK,
+                {
+                    "version": __version__,
+                    "features": {
+                        "open_folder": True,
+                        "run_modal_complete": True,
+                    },
+                },
+            )
+
         if path.startswith("/api/tasks/"):
             task_id = path.removeprefix("/api/tasks/").split("/", 1)[0].upper()
             if not TASK_ID_PATTERN.match(task_id):
                 return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid task id."})
+            suffix = path.split("/")[-1].lower()
+            if suffix in OPEN_FOLDER_ACTIONS:
+                return self._handle_open_folder(task_id)
             if path.endswith("/command"):
                 commands = build_openclaw_commands(self.config, task_id)
                 if not commands:
@@ -276,21 +302,21 @@ class BoardHandler(BaseHTTPRequestHandler):
             task = show_task(self.config, task_id)
             return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
 
-        if action == "open-folder":
-            ok, detail, folder_path = open_task_output_folder(self.config, task_id)
-            if not ok:
-                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
-            return self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "detail": detail, "folder_path": folder_path},
-            )
+        if action in OPEN_FOLDER_ACTIONS:
+            return self._handle_open_folder(task_id)
 
         if action == "complete":
             ok, detail = complete_task(self.config, task_id, remove_prompt=remove_prompt)
         elif action == "cancel":
             ok, detail = cancel_task(self.config, task_id, remove_prompt=remove_prompt)
         else:
-            return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Unknown action."})
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "error": f"Unknown action '{action}'. Restart the board after git pull "
+                    "(Ctrl+C, then python -m overnight_app_maker board).",
+                },
+            )
 
         if not ok:
             return self._send_json(HTTPStatus.NOT_FOUND, {"error": detail})
@@ -324,6 +350,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         data = target.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", guessed)
+        if target.name == "index.html":
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -341,6 +369,7 @@ def run_board_server(
     print(f"[info] Kanban board at {url}")
     print(f"[info] Backlog: {config.backlog_file}")
     print(f"[info] Goals: {config.goals_file}")
+    print("[info] After git pull, restart this server so new board buttons work.")
     print("[info] Press Ctrl+C to stop.")
 
     if open_browser:
