@@ -6,20 +6,25 @@ import yaml
 
 from overnight_app_maker.config import AppConfig
 from overnight_app_maker.task_manager import (
+    archive_done_tasks,
     board_payload,
     build_openclaw_commands,
     cancel_task,
     complete_task,
+    confirm_plan_tasks,
     delete_task_entry,
     diagnose_planning_readiness,
+    fresh_lab_session,
     list_task_views,
     plan_tasks_for_board,
+    preview_plan_tasks,
     preview_task_prompt,
     queue_prompt_path,
     queue_task,
     read_goals,
     remove_queue_prompt,
     show_task,
+    uncomplete_task,
     write_goals,
 )
 
@@ -266,3 +271,71 @@ def test_plan_tasks_for_board_zero_when_no_bullets_and_blocked(tmp_path: Path) -
 def test_remove_queue_prompt_missing_is_false(tmp_path: Path) -> None:
     config = _config(tmp_path)
     assert remove_queue_prompt(config.project_root, "TASK-999", "logs/worker-queue") is False
+
+
+def test_archive_done_hides_from_board(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [
+            {"id": "TASK-001", "title": "Done one", "status": "done"},
+            {"id": "TASK-002", "title": "Todo one", "status": "todo"},
+        ],
+    )
+    count, detail = archive_done_tasks(config)
+    assert count == 1
+    assert "Archived" in detail
+    views = list_task_views(config)
+    assert len(views) == 1
+    assert views[0]["id"] == "TASK-002"
+    payload = board_payload(config)
+    assert payload["archived_count"] == 1
+
+
+def test_uncomplete_task_removes_log_line(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(config.backlog_file, [{"id": "TASK-005", "title": "Finish me", "status": "done"}])
+    config.tasks_log_file.parent.mkdir(parents=True, exist_ok=True)
+    config.tasks_log_file.write_text("- TASK-005: Finish me\n", encoding="utf-8")
+
+    ok, detail = uncomplete_task(config, "TASK-005")
+    assert ok
+    task = show_task(config, "TASK-005")
+    assert task is not None
+    assert task["status"] == "todo"
+    assert "TASK-005" not in config.tasks_log_file.read_text(encoding="utf-8")
+
+
+def test_preview_and_confirm_plan_with_selection(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    goals = "# Goals\n\n## Personal\n\n- Build a habit tracker.\n\n## Overnight App Ideas\n\n- Morning checklist.\n"
+    preview = preview_plan_tasks(config, goals_content=goals)
+    assert preview["ok"] is True
+    assert preview["planned_count"] >= 1
+
+    first_title = preview["candidates"][0]["title"]
+    result = confirm_plan_tasks(
+        config,
+        goals_content=goals,
+        selected_titles=[first_title],
+    )
+    assert result["added_count"] == 1
+    views = list_task_views(config, status_filter="todo")
+    assert any(v["title"] == first_title for v in views)
+
+
+def test_fresh_lab_session_archives_closed_tasks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [
+            {"id": "TASK-001", "title": "Done", "status": "done"},
+            {"id": "TASK-002", "title": "Cancelled", "status": "cancelled"},
+            {"id": "TASK-003", "title": "Open", "status": "todo"},
+        ],
+    )
+    result = fresh_lab_session(config)
+    assert result["archived_done"] == 1
+    assert result["archived_cancelled"] == 1
+    views = list_task_views(config)
+    assert len(views) == 1

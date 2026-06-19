@@ -59,3 +59,15 @@ def append_completion(path: Path, task_id: str, title: str) -> None:
         updated = content.rstrip() + f"\n\n## {today}\n\n{line}"
 
     path.write_text(updated, encoding="utf-8")
+
+
+def remove_completion(path: Path, task_id: str) -> bool:
+    if not path.exists():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    marker = f"- {task_id}:"
+    filtered = [line for line in lines if not line.lstrip().startswith(marker)]
+    if len(filtered) == len(lines):
+        return False
+    path.write_text("".join(filtered), encoding="utf-8")
+    return True

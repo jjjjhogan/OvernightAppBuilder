@@ -156,3 +156,60 @@ def test_board_api_plan_tasks(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_board_api_plan_preview_and_confirm(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.backlog_file.write_text("tasks: []\n", encoding="utf-8")
+    server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    goals_body = {
+        "goals_content": "# Goals\n\n## Personal\n\n- Build a study planner app.\n",
+        "goals_only": True,
+    }
+
+    try:
+        status, preview = _request(port, "POST", "/api/plan/preview", goals_body)
+        assert status == 200
+        assert preview["candidates"]
+        title = preview["candidates"][0]["title"]
+
+        status, confirm = _request(
+            port,
+            "POST",
+            "/api/plan/confirm",
+            {**goals_body, "selected_titles": [title]},
+        )
+        assert status == 200
+        assert confirm["added_count"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_board_api_archive_and_tasks_log(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        status, _ = _request(port, "POST", "/api/tasks/TASK-001/complete", {})
+        assert status == 200
+
+        status, archive = _request(port, "POST", "/api/board/archive-done", {})
+        assert status == 200
+        assert archive["archived_count"] == 1
+
+        status, log = _request(port, "GET", "/api/tasks-log")
+        assert status == 200
+        assert "TASK-001" in log["content"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

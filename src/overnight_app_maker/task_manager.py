@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from .backlog import (
+    archive_tasks_with_status,
     delete_task,
     get_task,
+    is_board_visible,
     kanban_column,
     load_backlog,
     merge_planned_tasks,
@@ -27,7 +29,7 @@ from .planner import (
     explain_planning_blockers,
     plan_daily_tasks,
 )
-from .tasks_log import append_completion, extract_completed_summaries, load_tasks_log
+from .tasks_log import append_completion, extract_completed_summaries, load_tasks_log, remove_completion
 
 DEFAULT_QUEUE_DIR = "logs/worker-queue"
 
@@ -80,10 +82,31 @@ def resolve_worker_prompt(
     )
 
 
+def _artifact_exists(project_root: Path, output_dir: str) -> bool:
+    if not output_dir:
+        return False
+    base = project_root / output_dir
+    if not base.exists():
+        return False
+    for pattern in ("*.md", "*.html", "index.html"):
+        if list(base.glob(pattern)):
+            return True
+    return any(base.iterdir()) if base.is_dir() else False
+
+
+def _build_ready(project_root: Path, task: dict[str, Any]) -> bool:
+    phase = str(task.get("phase", "")).lower()
+    if phase != "build":
+        return True
+    artifact = _find_latest_planning_artifact(project_root)
+    return artifact is not None
+
+
 def task_to_view(task: dict[str, Any], *, project_root: Path, queue_dir: str = DEFAULT_QUEUE_DIR) -> dict[str, Any]:
     task_id = str(task.get("id", ""))
     status = normalize_status(str(task.get("status", "todo")))
     prompt_path = queue_prompt_path(project_root, task_id, queue_dir)
+    output_dir = str(task.get("output_dir", ""))
     return {
         "id": task_id,
         "title": str(task.get("title", "")),
@@ -91,12 +114,14 @@ def task_to_view(task: dict[str, Any], *, project_root: Path, queue_dir: str = D
         "status": status,
         "column": kanban_column(status),
         "owner": str(task.get("owner", "main")),
-        "artifact": str(task.get("artifact", task.get("output_dir", ""))),
-        "output_dir": str(task.get("output_dir", "")),
+        "artifact": str(task.get("artifact", output_dir)),
+        "output_dir": output_dir,
         "phase": str(task.get("phase", "")),
         "created_at": str(task.get("created_at", "")),
         "prompt_path": str(prompt_path.relative_to(project_root).as_posix()) if prompt_path.exists() else "",
         "has_prompt": prompt_path.exists(),
+        "has_artifact": _artifact_exists(project_root, output_dir),
+        "build_ready": _build_ready(project_root, task),
     }
 
 
@@ -105,11 +130,14 @@ def list_task_views(
     *,
     status_filter: str | None = None,
     queue_dir: str | None = None,
+    include_archived: bool = False,
 ) -> list[dict[str, Any]]:
     queue_dir = queue_dir or queue_dir_for_config(config)
     views: list[dict[str, Any]] = []
     normalized_filter = normalize_status(status_filter) if status_filter else None
     for task in load_backlog(config.backlog_file):
+        if not include_archived and not is_board_visible(task):
+            continue
         view = task_to_view(task, project_root=config.project_root, queue_dir=queue_dir)
         if normalized_filter and view["status"] != normalized_filter:
             continue
@@ -236,17 +264,64 @@ def preview_task_prompt(
     return True, f"Preview ready for {task_id}.", prompt
 
 
-def plan_tasks_for_board(
+def uncomplete_task(
+    config: AppConfig,
+    task_id: str,
+) -> tuple[bool, str]:
+    task = get_task(config.backlog_file, task_id)
+    if not task:
+        return False, f"Task {task_id} not found."
+    status = normalize_status(str(task.get("status", "todo")))
+    if status != "done":
+        return False, f"Cannot uncomplete {task_id} with status {status}."
+    remove_completion(config.tasks_log_file, task_id)
+    update_task_status(config.backlog_file, task_id, "todo")
+    return True, f"Moved {task_id} back to todo and removed tasks-log entry."
+
+
+def archive_done_tasks(config: AppConfig) -> tuple[int, str]:
+    count = archive_tasks_with_status(config.backlog_file, {"done"})
+    return count, f"Archived {count} done task(s)."
+
+
+def archive_cancelled_tasks(config: AppConfig) -> tuple[int, str]:
+    count = archive_tasks_with_status(config.backlog_file, {"cancelled"})
+    return count, f"Archived {count} cancelled task(s)."
+
+
+def fresh_lab_session(config: AppConfig) -> dict[str, Any]:
+    done_count = archive_tasks_with_status(config.backlog_file, {"done"})
+    cancelled_count = archive_tasks_with_status(config.backlog_file, {"cancelled"})
+    return {
+        "ok": True,
+        "archived_done": done_count,
+        "archived_cancelled": cancelled_count,
+        "detail": (
+            f"Fresh lab session: archived {done_count} done and {cancelled_count} cancelled task(s). "
+            "Enable Allow repeat if you want to replan similar titles from memory/tasks-log.md."
+        ),
+    }
+
+
+def read_tasks_log_for_board(config: AppConfig) -> dict[str, Any]:
+    path = config.tasks_log_file
+    content = load_tasks_log(path) if path.exists() else ""
+    return {
+        "path": path.relative_to(config.project_root).as_posix() if path.exists() else str(path.name),
+        "content": content,
+        "exists": path.exists(),
+        "completed_count": len(extract_completed_summaries(content)),
+    }
+
+
+def _plan_tasks_internal(
     config: AppConfig,
     *,
     goals_content: str | None = None,
     allow_repeat: bool = False,
-) -> dict[str, Any]:
-    try:
-        goals = _resolve_goals_text(config, goals_content)
-    except FileNotFoundError as exc:
-        return {"ok": False, "error": str(exc), "added_count": 0, "planned_count": 0, "blockers": []}
-
+    goals_only: bool = False,
+) -> tuple[str, list[PlannedTask], dict[str, Any]]:
+    goals = _resolve_goals_text(config, goals_content)
     goals_diagnosis = diagnose_goals(goals)
     worker_instructions = _load_worker_instructions(config.worker_instructions_file)
     tasks = plan_daily_tasks(
@@ -257,8 +332,84 @@ def plan_tasks_for_board(
         worker_instructions=worker_instructions,
         project_root=config.project_root,
         allow_repeat=allow_repeat,
+        goals_only=goals_only,
     )
-    added = merge_planned_tasks(config.backlog_file, tasks) if tasks else []
+    return goals, tasks, goals_diagnosis
+
+
+def preview_plan_tasks(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+    allow_repeat: bool = False,
+    goals_only: bool = False,
+) -> dict[str, Any]:
+    try:
+        _goals, tasks, goals_diagnosis = _plan_tasks_internal(
+            config,
+            goals_content=goals_content,
+            allow_repeat=allow_repeat,
+            goals_only=goals_only,
+        )
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc), "candidates": []}
+
+    candidates = [
+        {
+            "id": task.id,
+            "title": task.title,
+            "description": task.description,
+            "phase": task.phase,
+            "output_dir": task.output_dir,
+        }
+        for task in tasks
+    ]
+    blockers: list[str] = []
+    if not candidates:
+        blockers = explain_planning_blockers(
+            _goals,
+            tasks_log_path=config.tasks_log_file,
+            backlog_path=config.backlog_file,
+            project_root=config.project_root,
+        )
+        if goals_only:
+            blockers.append("[info] Goals-only mode skips generic fallback tasks.")
+        elif not allow_repeat:
+            blockers.append(
+                "[info] Try Allow repeat or Goals only to change what gets planned."
+            )
+
+    return {
+        "ok": True,
+        "candidates": candidates,
+        "planned_count": len(candidates),
+        "blockers": blockers,
+        "goals_diagnosis": goals_diagnosis,
+        "allow_repeat": allow_repeat,
+        "goals_only": goals_only,
+    }
+
+
+def confirm_plan_tasks(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+    allow_repeat: bool = False,
+    goals_only: bool = False,
+    selected_titles: list[str] | None = None,
+) -> dict[str, Any]:
+    try:
+        goals, tasks, goals_diagnosis = _plan_tasks_internal(
+            config,
+            goals_content=goals_content,
+            allow_repeat=allow_repeat,
+            goals_only=goals_only,
+        )
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc), "added_count": 0, "planned_count": 0, "blockers": []}
+
+    title_set = set(selected_titles) if selected_titles is not None else None
+    added = merge_planned_tasks(config.backlog_file, tasks, selected_titles=title_set) if tasks else []
     blockers: list[str] = []
     if len(tasks) == 0:
         blockers = explain_planning_blockers(
@@ -267,14 +418,9 @@ def plan_tasks_for_board(
             backlog_path=config.backlog_file,
             project_root=config.project_root,
         )
-        if not allow_repeat:
-            blockers.append(
-                "[info] Try enabling Allow repeat on the board to ignore memory/tasks-log.md history."
-            )
     elif len(added) == 0:
         blockers = [
-            "[info] Tasks were generated but none were added to the backlog.",
-            "[info] Open backlog items with the same title may already exist — complete or delete them first.",
+            "[info] Selected tasks were not added — open backlog items with the same title may already exist.",
         ]
 
     return {
@@ -285,7 +431,36 @@ def plan_tasks_for_board(
         "blockers": blockers,
         "goals_diagnosis": goals_diagnosis,
         "allow_repeat": allow_repeat,
+        "goals_only": goals_only,
     }
+
+
+def export_diagnose_json(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+) -> dict[str, Any]:
+    diagnosis = diagnose_planning_readiness(config, goals_content=goals_content)
+    diagnosis["project_root"] = str(config.project_root)
+    diagnosis["backlog_file"] = str(config.backlog_file.relative_to(config.project_root))
+    diagnosis["tasks_log"] = read_tasks_log_for_board(config)
+    return diagnosis
+
+
+def plan_tasks_for_board(
+    config: AppConfig,
+    *,
+    goals_content: str | None = None,
+    allow_repeat: bool = False,
+    goals_only: bool = False,
+) -> dict[str, Any]:
+    return confirm_plan_tasks(
+        config,
+        goals_content=goals_content,
+        allow_repeat=allow_repeat,
+        goals_only=goals_only,
+        selected_titles=None,
+    )
 
 
 def diagnose_planning_readiness(
@@ -518,9 +693,14 @@ def format_task_detail(task: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def board_payload(config: AppConfig, *, queue_dir: str | None = None) -> dict[str, Any]:
+def board_payload(
+    config: AppConfig,
+    *,
+    queue_dir: str | None = None,
+    include_archived: bool = False,
+) -> dict[str, Any]:
     queue_dir = queue_dir or queue_dir_for_config(config)
-    views = list_task_views(config, queue_dir=queue_dir)
+    views = list_task_views(config, queue_dir=queue_dir, include_archived=include_archived)
     columns: dict[str, list[dict[str, Any]]] = {
         "todo": [],
         "queued": [],
@@ -528,6 +708,7 @@ def board_payload(config: AppConfig, *, queue_dir: str | None = None) -> dict[st
         "done": [],
         "failed": [],
         "cancelled": [],
+        "archived": [],
     }
     for view in views:
         column = view["column"]
@@ -535,12 +716,19 @@ def board_payload(config: AppConfig, *, queue_dir: str | None = None) -> dict[st
             column = "todo"
         columns[column].append(view)
     goals = read_goals(config)
+    all_tasks = load_backlog(config.backlog_file)
+    archived_count = sum(
+        1 for task in all_tasks if normalize_status(str(task.get("status", "todo"))) == "archived"
+    )
     return {
         "project_root": str(config.project_root),
         "backlog_file": str(config.backlog_file.relative_to(config.project_root)),
         "goals_file": goals["path"],
         "columns": columns,
         "total": len(views),
+        "archived_count": archived_count,
+        "include_archived": include_archived,
+        "tasks_log_path": read_tasks_log_for_board(config)["path"],
     }
 
 

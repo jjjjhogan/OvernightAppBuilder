@@ -472,3 +472,13 @@ def test_resolve_openclaw_executable_prefers_cmd_on_windows(monkeypatch) -> None
     assert openclaw_adapter.resolve_openclaw_executable() == r"C:\Users\garyj\AppData\Roaming\npm\openclaw.cmd"
     command = openclaw_adapter.build_openclaw_command("agent", "--message=test")
     assert command[0] == r"C:\Users\garyj\AppData\Roaming\npm\openclaw.cmd"
+
+
+def test_plan_daily_tasks_goals_only_skips_fallbacks(tmp_path: Path) -> None:
+    goals = "# Goals\n\n## Personal\n\n- Learn guitar.\n"
+    all_tasks = plan_daily_tasks(goals, max_tasks=5, project_root=tmp_path)
+    goals_only = plan_daily_tasks(goals, max_tasks=5, project_root=tmp_path, goals_only=True)
+
+    assert len(all_tasks) >= len(goals_only)
+    assert all("Learn guitar" in t.title or "Plan and brief" in t.title for t in goals_only)
+    assert not any(t.title == "Draft one useful artifact that advances a stated goal" for t in goals_only)

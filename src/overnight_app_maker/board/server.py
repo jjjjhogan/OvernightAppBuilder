@@ -13,17 +13,24 @@ from urllib.parse import unquote, urlparse
 
 from ..config import AppConfig
 from ..task_manager import (
+    archive_done_tasks,
     board_payload,
     build_openclaw_commands,
     cancel_task,
     complete_task,
+    confirm_plan_tasks,
     delete_task_entry,
     diagnose_planning_readiness,
+    export_diagnose_json,
+    fresh_lab_session,
     plan_tasks_for_board,
+    preview_plan_tasks,
     preview_task_prompt,
     queue_task,
     read_goals,
+    read_tasks_log_for_board,
     show_task,
+    uncomplete_task,
     update_task_details,
     write_goals,
 )
@@ -89,7 +96,18 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._serve_static(rel)
 
         if path == "/api/board":
-            return self._send_json(HTTPStatus.OK, board_payload(self.config))
+            query = parsed.query or ""
+            include_archived = "include_archived=1" in query or "include_archived=true" in query
+            return self._send_json(HTTPStatus.OK, board_payload(self.config, include_archived=include_archived))
+
+        if path == "/api/tasks-log":
+            return self._send_json(HTTPStatus.OK, read_tasks_log_for_board(self.config))
+
+        if path == "/api/export/diagnose":
+            return self._send_json(
+                HTTPStatus.OK,
+                export_diagnose_json(self.config, goals_content=None),
+            )
 
         if path == "/api/goals":
             return self._send_json(HTTPStatus.OK, read_goals(self.config))
@@ -150,6 +168,33 @@ class BoardHandler(BaseHTTPRequestHandler):
                 self.config,
                 goals_content=body.get("goals_content"),
                 allow_repeat=bool(body.get("allow_repeat", False)),
+                goals_only=bool(body.get("goals_only", False)),
+            )
+            if not result.get("ok"):
+                return self._send_json(HTTPStatus.BAD_REQUEST, result)
+            return self._send_json(HTTPStatus.OK, result)
+
+        if path == "/api/plan/preview":
+            result = preview_plan_tasks(
+                self.config,
+                goals_content=body.get("goals_content"),
+                allow_repeat=bool(body.get("allow_repeat", False)),
+                goals_only=bool(body.get("goals_only", False)),
+            )
+            if not result.get("ok"):
+                return self._send_json(HTTPStatus.BAD_REQUEST, result)
+            return self._send_json(HTTPStatus.OK, result)
+
+        if path == "/api/plan/confirm":
+            selected = body.get("selected_titles")
+            if selected is not None and not isinstance(selected, list):
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "selected_titles must be a list."})
+            result = confirm_plan_tasks(
+                self.config,
+                goals_content=body.get("goals_content"),
+                allow_repeat=bool(body.get("allow_repeat", False)),
+                goals_only=bool(body.get("goals_only", False)),
+                selected_titles=selected,
             )
             if not result.get("ok"):
                 return self._send_json(HTTPStatus.BAD_REQUEST, result)
@@ -157,6 +202,23 @@ class BoardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/plan/diagnose":
             result = diagnose_planning_readiness(
+                self.config,
+                goals_content=body.get("goals_content"),
+            )
+            if not result.get("ok"):
+                return self._send_json(HTTPStatus.BAD_REQUEST, result)
+            return self._send_json(HTTPStatus.OK, result)
+
+        if path == "/api/board/archive-done":
+            count, detail = archive_done_tasks(self.config)
+            return self._send_json(HTTPStatus.OK, {"ok": True, "archived_count": count, "detail": detail})
+
+        if path == "/api/board/fresh-start":
+            result = fresh_lab_session(self.config)
+            return self._send_json(HTTPStatus.OK, result)
+
+        if path == "/api/export/diagnose":
+            result = export_diagnose_json(
                 self.config,
                 goals_content=body.get("goals_content"),
             )
@@ -190,7 +252,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 {"ok": True, "detail": detail, "task_id": task_id, "prompt_text": prompt_text},
             )
 
-        if action == "queue":
+        if action == "queue" or action == "requeue":
             ok, detail = queue_task(self.config, task_id, goals_content=goals_content)
             if not ok:
                 return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
@@ -205,6 +267,13 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "prompt_text": commands.get("prompt_text", ""),
                 },
             )
+
+        if action == "uncomplete":
+            ok, detail = uncomplete_task(self.config, task_id)
+            if not ok:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+            task = show_task(self.config, task_id)
+            return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
 
         if action == "complete":
             ok, detail = complete_task(self.config, task_id, remove_prompt=remove_prompt)

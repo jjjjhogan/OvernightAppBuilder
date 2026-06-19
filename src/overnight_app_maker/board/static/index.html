@@ -55,6 +55,26 @@
     .sidebar label.allow-repeat {
       font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem;
     }
+    .sidebar-tabs { display: flex; gap: 0.25rem; margin-bottom: 0.35rem; }
+    .sidebar-tabs button { flex: 1; font-size: 0.75rem; padding: 0.35rem; }
+    .sidebar-tabs button.active { border-color: var(--accent); background: #264a6e; }
+    .sidebar-panel { display: none; flex-direction: column; gap: 0.5rem; flex: 1; }
+    .sidebar-panel.active { display: flex; }
+    #tasks-log-view, #help-panel {
+      flex: 1; min-height: 280px; background: #0b1017; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.65rem; font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.78rem; overflow: auto; white-space: pre-wrap;
+    }
+    #help-panel { font-family: inherit; font-size: 0.82rem; line-height: 1.45; }
+    #help-panel h3 { margin: 0.75rem 0 0.35rem; font-size: 0.85rem; color: var(--accent); }
+    #help-panel h3:first-child { margin-top: 0; }
+    .badge { display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 4px; margin-left: 0.25rem; }
+    .badge.ok { background: #2d4a32; color: var(--ok); }
+    .badge.warn { background: #4a4020; color: #e5c07b; }
+    .plan-candidate { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+    .plan-candidate:last-child { border-bottom: none; }
+    .plan-candidate label { flex: 1; font-size: 0.85rem; cursor: pointer; }
+    .plan-candidate .phase { font-size: 0.75rem; color: var(--muted); }
     #goals-editor {
       flex: 1; min-height: 320px; width: 100%; background: #0b1017; color: var(--text);
       border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem;
@@ -115,28 +135,85 @@
       <div class="meta" id="meta">Loading…</div>
     </div>
     <div class="header-actions">
+      <button id="archive-done">Archive done</button>
+      <button id="fresh-start">Fresh lab</button>
+      <label class="allow-repeat"><input type="checkbox" id="show-archived" /> Show archived</label>
+      <button id="export-diagnose">Export diagnose</button>
       <button class="primary" id="refresh">Refresh</button>
     </div>
   </header>
   <div class="error-banner" id="error"></div>
   <div class="layout">
     <aside class="sidebar">
-      <h2>Goals file</h2>
-      <div class="path" id="goals-path">goals/GOALS.example.md</div>
-      <textarea id="goals-editor" spellcheck="false"></textarea>
-      <div class="sidebar-actions">
-        <button class="primary" id="save-goals">Save goals</button>
-        <button id="plan-tasks">Plan tasks</button>
-        <button id="check-plan">Check goals</button>
+      <div class="sidebar-tabs">
+        <button class="active" data-tab="goals">Goals</button>
+        <button data-tab="log">Tasks log</button>
+        <button data-tab="help">Help</button>
       </div>
-      <label class="allow-repeat"><input type="checkbox" id="allow-repeat" /> Allow repeat (ignore tasks-log history)</label>
-      <div id="plan-diagnostics">Click Check goals to validate formatting before planning.</div>
-      <div class="status-line" id="goals-status"></div>
-      <p class="hint">Use `- eat healthier` under ## Personal (dash required). Example: lines are ignored.</p>
+      <div class="sidebar-panel active" id="panel-goals">
+        <h2>Goals file</h2>
+        <div class="path" id="goals-path">goals/GOALS.example.md</div>
+        <textarea id="goals-editor" spellcheck="false"></textarea>
+        <div class="sidebar-actions">
+          <button class="primary" id="save-goals">Save goals</button>
+          <button id="insert-template">Template</button>
+          <button id="plan-tasks">Plan tasks</button>
+          <button id="check-plan">Check goals</button>
+        </div>
+        <label class="allow-repeat"><input type="checkbox" id="allow-repeat" /> Allow repeat (ignore tasks-log history)</label>
+        <label class="allow-repeat"><input type="checkbox" id="goals-only" /> Goals only (skip generic fallbacks)</label>
+        <div id="plan-diagnostics">Click Check goals to validate formatting before planning.</div>
+        <div class="status-line" id="goals-status"></div>
+        <p class="hint">Use `- eat healthier` under ## Personal (dash required). Example: lines are ignored. Ctrl+S saves goals.</p>
+      </div>
+      <div class="sidebar-panel" id="panel-log">
+        <h2>Tasks log</h2>
+        <div class="path" id="tasks-log-path">memory/tasks-log.md</div>
+        <pre id="tasks-log-view">Loading…</pre>
+      </div>
+      <div class="sidebar-panel" id="panel-help">
+        <div id="help-panel">
+          <h3>Workflow</h3>
+          <p>1. Edit goals with <code>- </code> bullets under planning sections.<br>
+          2. Check goals → Plan tasks (preview &amp; select).<br>
+          3. Queue a task → Run command in OpenClaw.<br>
+          4. Mark Complete when the worker finishes.</p>
+          <h3>Planning blocked?</h3>
+          <p>Enable <strong>Allow repeat</strong> if titles exist in tasks-log. Use <strong>Goals only</strong> to skip generic scaffold tasks. Archive done tasks or run Fresh lab to clear the board.</p>
+          <h3>Build phase</h3>
+          <p>Build tasks need a planning brief in <code>reports/</code> first. Cards show a warning until a brief exists.</p>
+          <h3>CLI backup</h3>
+          <p><code>python -m overnight_app_maker tasks list</code><br>
+          <code>python -m overnight_app_maker tasks diagnose</code><br>
+          <code>python -m overnight_app_maker tasks archive-done</code></p>
+        </div>
+      </div>
     </aside>
     <main class="board" id="board"></main>
   </div>
   <div id="toast"></div>
+
+  <div class="modal-overlay" id="plan-preview-modal">
+    <div class="modal-panel">
+      <h3>Select tasks to add</h3>
+      <p class="hint">Uncheck any task you do not want in the backlog. Nothing is written until you confirm.</p>
+      <div id="plan-candidates"></div>
+      <div class="modal-actions">
+        <button class="primary" id="confirm-plan">Add selected</button>
+        <button id="cancel-plan-preview">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="task-detail-modal">
+    <div class="modal-panel">
+      <h3 id="task-detail-title">Task detail</h3>
+      <pre class="prompt-box" id="task-detail-body" style="max-height:50vh;"></pre>
+      <div class="modal-actions">
+        <button id="task-detail-close">Close</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-overlay" id="plan-result-modal">
     <div class="modal-panel">
@@ -186,13 +263,24 @@
   <script>
     const COLUMN_LABELS = {
       todo: "To Do", queued: "Queued", in_progress: "In Progress",
-      done: "Done", failed: "Failed", cancelled: "Cancelled",
+      done: "Done", failed: "Failed", cancelled: "Cancelled", archived: "Archived",
     };
+    const GOALS_TEMPLATE = `# Goals
+
+## Personal
+
+- Your first goal here
+
+## Overnight App Ideas
+
+- App idea here
+`;
     const isWindows = navigator.platform.toLowerCase().includes("win");
 
     let lastCommand = { primary: "", alt: "" };
     let savedGoalsContent = "";
     let pendingQueueTaskId = null;
+    let pendingPlanTitles = [];
 
     const boardEl = document.getElementById("board");
     const metaEl = document.getElementById("meta");
@@ -203,6 +291,37 @@
     const goalsStatusEl = document.getElementById("goals-status");
     const planDiagnosticsEl = document.getElementById("plan-diagnostics");
     const allowRepeatEl = document.getElementById("allow-repeat");
+    const goalsOnlyEl = document.getElementById("goals-only");
+    const showArchivedEl = document.getElementById("show-archived");
+
+    function planOptions() {
+      return {
+        ...goalsPayload(),
+        allow_repeat: allowRepeatEl.checked,
+        goals_only: goalsOnlyEl.checked,
+      };
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll(".sidebar-tabs button").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.tab === tab);
+      });
+      document.querySelectorAll(".sidebar-panel").forEach(panel => {
+        panel.classList.toggle("active", panel.id === `panel-${tab}`);
+      });
+      if (tab === "log") loadTasksLog();
+    }
+
+    async function loadTasksLog() {
+      try {
+        const data = await api("/api/tasks-log");
+        document.getElementById("tasks-log-path").textContent = data.path || "memory/tasks-log.md";
+        document.getElementById("tasks-log-view").textContent =
+          data.content || "(empty — completed tasks appear here)";
+      } catch (err) {
+        document.getElementById("tasks-log-view").textContent = "Could not load tasks log.";
+      }
+    }
 
     function showPlanResult(title, lines) {
       document.getElementById("plan-result-title").textContent = title;
@@ -314,55 +433,106 @@
 
     async function planTasks() {
       try {
-        const data = await api("/api/plan", {
+        const data = await api("/api/plan/preview", {
           method: "POST",
-          body: JSON.stringify({
-            ...goalsPayload(),
-            allow_repeat: allowRepeatEl.checked,
-          }),
+          body: JSON.stringify(planOptions()),
         });
         savedGoalsContent = goalsEditor.value;
         goalsEditor.classList.remove("dirty");
         renderDiagnostics(data);
 
-        const lines = [
-          `Planned: ${data.planned_count}`,
-          `Added to backlog: ${data.added_count}`,
-        ];
-        if (data.added_titles && data.added_titles.length) {
-          lines.push("", "New tasks:");
-          data.added_titles.forEach(t => lines.push(`- ${t}`));
-        }
-        if (data.blockers && data.blockers.length) {
-          lines.push("", "Notes:");
-          data.blockers.forEach(b => lines.push(b.replace(/^\[info\]\s*/, "")));
+        if (!data.candidates || data.candidates.length === 0) {
+          const lines = ["No tasks to plan."];
+          if (data.blockers && data.blockers.length) {
+            lines.push("", "Notes:");
+            data.blockers.forEach(b => lines.push(b.replace(/^\[info\]\s*/, "")));
+          }
+          showPlanResult("No tasks planned", lines);
+          setGoalsStatus("Planning blocked — see details.", true);
+          return;
         }
 
-        if (data.planned_count === 0 || data.added_count === 0) {
-          showPlanResult(
-            data.planned_count === 0 ? "No tasks planned" : "Nothing added to backlog",
-            lines,
-          );
-          setGoalsStatus(
-            data.planned_count === 0 ? "Planning blocked — see details." : "Tasks generated but not added.",
-            true,
-          );
-        } else {
-          showToast(`Added ${data.added_count} task(s) to the backlog.`);
-          setGoalsStatus(`Added ${data.added_count} task(s).`);
-        }
-        await loadBoard();
+        pendingPlanTitles = data.candidates.map(c => c.title);
+        const container = document.getElementById("plan-candidates");
+        container.innerHTML = data.candidates.map((c, i) => `
+          <div class="plan-candidate">
+            <input type="checkbox" id="plan-cb-${i}" checked data-title="${escapeHtml(c.title)}" />
+            <label for="plan-cb-${i}">
+              <strong>${escapeHtml(c.title)}</strong>
+              <div class="phase">${escapeHtml(c.phase || "plan")} → ${escapeHtml(c.output_dir || "reports")}</div>
+              <div class="phase">${escapeHtml(c.description || "")}</div>
+            </label>
+          </div>
+        `).join("");
+        document.getElementById("plan-preview-modal").style.display = "flex";
       } catch (err) {
         setGoalsStatus(err.message, true);
         showToast(err.message);
       }
     }
 
+    async function confirmPlan() {
+      const selected = [...document.querySelectorAll("#plan-candidates input[type=checkbox]:checked")]
+        .map(cb => cb.dataset.title);
+      if (!selected.length) {
+        showToast("Select at least one task.");
+        return;
+      }
+      try {
+        const data = await api("/api/plan/confirm", {
+          method: "POST",
+          body: JSON.stringify({ ...planOptions(), selected_titles: selected }),
+        });
+        document.getElementById("plan-preview-modal").style.display = "none";
+        renderDiagnostics(data);
+
+        if (data.added_count === 0) {
+          const lines = [
+            `Planned: ${data.planned_count}`,
+            `Added to backlog: 0`,
+          ];
+          if (data.blockers) data.blockers.forEach(b => lines.push(b.replace(/^\[info\]\s*/, "")));
+          showPlanResult("Nothing added to backlog", lines);
+          setGoalsStatus("Tasks generated but not added.", true);
+        } else {
+          showToast(`Added ${data.added_count} task(s) to the backlog.`);
+          setGoalsStatus(`Added ${data.added_count} task(s).`);
+        }
+        await loadBoard();
+        await loadTasksLog();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    function showTaskDetail(task) {
+      const lines = [
+        `ID:          ${task.id}`,
+        `Title:       ${task.title}`,
+        `Status:      ${task.status}`,
+        `Phase:       ${task.phase || "-"}`,
+        `Output:      ${task.output_dir || "-"}`,
+        `Artifact:    ${task.has_artifact ? "yes" : "no"}`,
+        `Build ready: ${task.build_ready !== false ? "yes" : "no (needs planning brief)"}`,
+        `Prompt:      ${task.prompt_path || "(none)"}`,
+        "",
+        task.description || "",
+      ];
+      document.getElementById("task-detail-title").textContent = task.id;
+      document.getElementById("task-detail-body").textContent = lines.join("\n");
+      document.getElementById("task-detail-modal").style.display = "flex";
+    }
+
     function renderCard(task) {
       const card = document.createElement("article");
       card.className = "card";
+      const badges = [];
+      if (task.has_artifact) badges.push('<span class="badge ok">artifact</span>');
+      if (task.phase === "build" && task.build_ready === false) {
+        badges.push('<span class="badge warn">needs brief</span>');
+      }
       card.innerHTML = `
-        <div class="card-id">${task.id}</div>
+        <div class="card-id">${task.id}${badges.join("")}</div>
         <div class="card-title">${escapeHtml(task.title)}</div>
         <div class="card-meta">
           ${task.phase ? `Phase: ${escapeHtml(task.phase)} · ` : ""}
@@ -372,12 +542,25 @@
       `;
       const actions = card.querySelector(".card-actions");
 
+      const detailBtn = document.createElement("button");
+      detailBtn.textContent = "Details";
+      detailBtn.addEventListener("click", () => showTaskDetail(task));
+      actions.appendChild(detailBtn);
+
       if (task.status === "todo" || task.status === "failed") {
         const queueBtn = document.createElement("button");
         queueBtn.className = "primary";
         queueBtn.textContent = "Queue";
+        queueBtn.disabled = task.phase === "build" && task.build_ready === false;
         queueBtn.addEventListener("click", () => openQueuePreview(task.id));
         actions.appendChild(queueBtn);
+      }
+
+      if (task.status === "queued" || task.status === "in_progress") {
+        const requeueBtn = document.createElement("button");
+        requeueBtn.textContent = "Re-queue";
+        requeueBtn.addEventListener("click", () => openQueuePreview(task.id));
+        actions.appendChild(requeueBtn);
       }
 
       if (task.has_prompt) {
@@ -387,7 +570,14 @@
         actions.appendChild(runBtn);
       }
 
-      if (task.status !== "done" && task.status !== "cancelled") {
+      if (task.status === "done") {
+        const undoBtn = document.createElement("button");
+        undoBtn.textContent = "Undo complete";
+        undoBtn.addEventListener("click", () => act(task.id, "uncomplete"));
+        actions.appendChild(undoBtn);
+      }
+
+      if (task.status !== "done" && task.status !== "cancelled" && task.status !== "archived") {
         const completeBtn = document.createElement("button");
         completeBtn.textContent = "Complete";
         completeBtn.addEventListener("click", () => act(task.id, "complete"));
@@ -426,6 +616,7 @@
         });
         showToast(data.detail || "Updated.");
         await loadBoard();
+        if (action === "complete" || action === "uncomplete") await loadTasksLog();
       } catch (err) {
         showToast(err.message);
       }
@@ -511,9 +702,16 @@
 
     function renderBoard(payload) {
       boardEl.innerHTML = "";
-      metaEl.textContent = `${payload.total} task(s) · ${payload.backlog_file}`;
+      const archivedNote = payload.archived_count > 0 && !payload.include_archived
+        ? ` · ${payload.archived_count} archived hidden`
+        : "";
+      metaEl.textContent = `${payload.total} task(s) · ${payload.backlog_file}${archivedNote}`;
       if (payload.goals_file) goalsPathEl.textContent = payload.goals_file;
-      for (const [key, label] of Object.entries(COLUMN_LABELS)) {
+      const columnKeys = Object.keys(COLUMN_LABELS).filter(key =>
+        key !== "archived" || payload.include_archived
+      );
+      for (const key of columnKeys) {
+        const label = COLUMN_LABELS[key];
         const col = document.createElement("section");
         col.className = "column";
         const tasks = payload.columns[key] || [];
@@ -534,7 +732,8 @@
     async function loadBoard() {
       errorEl.style.display = "none";
       try {
-        const payload = await api("/api/board");
+        const suffix = showArchivedEl.checked ? "?include_archived=1" : "";
+        const payload = await api("/api/board" + suffix);
         renderBoard(payload);
       } catch (err) {
         errorEl.textContent = `Could not load board: ${err.message}. Use CLI: overnight-app-maker tasks list`;
@@ -542,6 +741,72 @@
       }
     }
 
+    async function archiveDone() {
+      if (!confirm("Archive all done tasks? They will be hidden from the board.")) return;
+      try {
+        const data = await api("/api/board/archive-done", { method: "POST", body: "{}" });
+        showToast(data.detail || "Archived.");
+        await loadBoard();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    async function freshStart() {
+      if (!confirm("Archive all done and cancelled tasks for a fresh lab session?")) return;
+      try {
+        const data = await api("/api/board/fresh-start", { method: "POST", body: "{}" });
+        showToast(data.detail || "Fresh lab ready.");
+        await loadBoard();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    async function exportDiagnose() {
+      try {
+        const data = await api("/api/export/diagnose", {
+          method: "POST",
+          body: JSON.stringify(goalsPayload()),
+        });
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "planning-diagnose.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast("Diagnose JSON downloaded.");
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
+    document.querySelectorAll(".sidebar-tabs button").forEach(btn => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+    document.getElementById("insert-template").addEventListener("click", () => {
+      if (goalsEditor.value.trim() && !confirm("Replace goals editor with template?")) return;
+      goalsEditor.value = GOALS_TEMPLATE;
+      markGoalsDirty();
+    });
+    document.getElementById("archive-done").addEventListener("click", archiveDone);
+    document.getElementById("fresh-start").addEventListener("click", freshStart);
+    document.getElementById("export-diagnose").addEventListener("click", exportDiagnose);
+    showArchivedEl.addEventListener("change", loadBoard);
+    document.getElementById("confirm-plan").addEventListener("click", confirmPlan);
+    document.getElementById("cancel-plan-preview").addEventListener("click", () => {
+      document.getElementById("plan-preview-modal").style.display = "none";
+    });
+    document.getElementById("task-detail-close").addEventListener("click", () => {
+      document.getElementById("task-detail-modal").style.display = "none";
+    });
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        saveGoals();
+      }
+    });
     goalsEditor.addEventListener("input", () => {
       markGoalsDirty();
       clearTimeout(window._diagnoseTimer);

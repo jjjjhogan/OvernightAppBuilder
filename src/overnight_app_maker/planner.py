@@ -351,6 +351,7 @@ def plan_daily_tasks(
     worker_instructions: str = "",
     project_root: Path | None = None,
     allow_repeat: bool = False,
+    goals_only: bool = False,
 ) -> list[PlannedTask]:
     """Plan daily tasks: planning artifacts first, then optional web-app build tasks."""
     root = (project_root or Path.cwd()).resolve()
@@ -395,32 +396,33 @@ def plan_daily_tasks(
                 allow_repeat=allow_repeat,
             )
 
-    for title, output_dir, description in PLANNING_FALLBACK_TASKS:
-        _append_candidate(
-            planning_candidates,
-            seen_titles=seen_titles,
-            title=title,
-            description=description,
-            output_dir=output_dir,
-            phase="plan",
-            tasks_log=tasks_log,
-            open_tasks=open_tasks,
-            allow_repeat=allow_repeat,
-        )
-
-    if has_planning and planning_artifact is not None:
-        for title, output_dir, description in _build_fallback_tasks(planning_artifact):
+    if not goals_only:
+        for title, output_dir, description in PLANNING_FALLBACK_TASKS:
             _append_candidate(
-                build_candidates,
+                planning_candidates,
                 seen_titles=seen_titles,
                 title=title,
                 description=description,
                 output_dir=output_dir,
-                phase="build",
+                phase="plan",
                 tasks_log=tasks_log,
                 open_tasks=open_tasks,
                 allow_repeat=allow_repeat,
             )
+
+        if has_planning and planning_artifact is not None:
+            for title, output_dir, description in _build_fallback_tasks(planning_artifact):
+                _append_candidate(
+                    build_candidates,
+                    seen_titles=seen_titles,
+                    title=title,
+                    description=description,
+                    output_dir=output_dir,
+                    phase="build",
+                    tasks_log=tasks_log,
+                    open_tasks=open_tasks,
+                    allow_repeat=allow_repeat,
+                )
 
     # Reserve at least one build slot when planning artifacts exist and max_tasks > 1.
     build_slots = 0

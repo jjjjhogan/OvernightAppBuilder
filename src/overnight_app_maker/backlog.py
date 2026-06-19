@@ -11,7 +11,7 @@ from .models import PlannedTask
 
 TASK_ID_PATTERN = re.compile(r"^TASK-(\d+)$", re.IGNORECASE)
 OPEN_STATUSES = {"todo", "in_progress", "queued", "running"}
-CLOSED_STATUSES = {"done", "failed", "cancelled", "deleted"}
+CLOSED_STATUSES = {"done", "failed", "cancelled", "deleted", "archived"}
 STATUS_ALIASES = {
     "in progress": "in_progress",
     "in-progress": "in_progress",
@@ -27,6 +27,8 @@ STATUS_ALIASES = {
     "cancelled": "cancelled",
     "canceled": "cancelled",
     "deleted": "deleted",
+    "archive": "archived",
+    "archived": "archived",
 }
 
 
@@ -109,7 +111,29 @@ def backlog_entry_from_planned(task: PlannedTask, *, owner: str = "main") -> dic
     return entry
 
 
-def merge_planned_tasks(path: Path, planned: list[PlannedTask], *, owner: str = "main") -> list[PlannedTask]:
+def is_board_visible(task: dict[str, Any]) -> bool:
+    return normalize_status(str(task.get("status", "todo"))) != "archived"
+
+
+def archive_tasks_with_status(path: Path, statuses: set[str]) -> int:
+    tasks = load_backlog(path)
+    count = 0
+    for task in tasks:
+        if normalize_status(str(task.get("status", "todo"))) in statuses:
+            task["status"] = "archived"
+            count += 1
+    if count:
+        save_backlog(path, tasks)
+    return count
+
+
+def merge_planned_tasks(
+    path: Path,
+    planned: list[PlannedTask],
+    *,
+    owner: str = "main",
+    selected_titles: set[str] | None = None,
+) -> list[PlannedTask]:
     existing = load_backlog(path)
     existing_ids = {str(task.get("id")) for task in existing}
     open_titles = {
@@ -120,6 +144,8 @@ def merge_planned_tasks(path: Path, planned: list[PlannedTask], *, owner: str = 
     merged = list(existing)
     added: list[PlannedTask] = []
     for task in planned:
+        if selected_titles is not None and task.title not in selected_titles:
+            continue
         if task.id in existing_ids:
             continue
         if task.title.strip().lower() in open_titles:
@@ -214,4 +240,6 @@ def kanban_column(status: str) -> str:
         return "failed"
     if normalized in {"cancelled"}:
         return "cancelled"
+    if normalized in {"archived"}:
+        return "archived"
     return "todo"

@@ -12,16 +12,20 @@ from .goals import load_goals
 from .planner import explain_planning_blockers, plan_daily_tasks
 from .runner import run_tasks
 from .task_manager import (
+    archive_done_tasks,
     build_openclaw_commands,
     cancel_task,
     complete_task,
     delete_task_entry,
+    diagnose_planning_readiness,
+    dumps_json,
     format_task_detail,
     format_task_list,
     list_task_views,
     queue_task,
     read_goals,
     show_task,
+    uncomplete_task,
     write_goals,
 )
 
@@ -69,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-repeat",
         action="store_true",
         help="Allow replanning task titles already listed in memory/tasks-log.md.",
+    )
+    plan_parser.add_argument(
+        "--goals-only",
+        action="store_true",
+        help="Plan only from goal bullets; skip generic fallback tasks.",
     )
 
     board_parser = subparsers.add_parser("board", help="Start the local Kanban board UI.")
@@ -121,6 +130,14 @@ def build_parser() -> argparse.ArgumentParser:
     queue_parser = tasks_sub.add_parser("queue", help="Write worker prompt and mark task queued (single-task queue mode).")
     queue_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
 
+    diagnose_parser = tasks_sub.add_parser("diagnose", help="Show planning readiness diagnostics as JSON.")
+    diagnose_parser.add_argument("--goals", help="Path to goals markdown (defaults to configured goals file).")
+
+    archive_parser = tasks_sub.add_parser("archive-done", help="Archive all done tasks (hide from board).")
+
+    uncomplete_parser = tasks_sub.add_parser("uncomplete", help="Move a done task back to todo and remove tasks-log line.")
+    uncomplete_parser.add_argument("task_id", help="Task id, e.g. TASK-002.")
+
     goals_parser = subparsers.add_parser("goals", help="View or edit the goals file.")
     _add_shared_config_args(goals_parser)
     goals_parser.add_argument("--goals", help="Path to the goals markdown file.")
@@ -155,6 +172,7 @@ def _run_plan(args: argparse.Namespace) -> None:
         worker_instructions=worker_instructions,
         project_root=config.project_root,
         allow_repeat=args.allow_repeat,
+        goals_only=args.goals_only,
     )
 
     print(f"[info] planned {len(tasks)} task(s).")
@@ -255,6 +273,31 @@ def _run_tasks(args: argparse.Namespace) -> None:
 
     if cmd == "queue":
         ok, detail = queue_task(config, task_id)
+        if not ok:
+            print(f"[error] {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"[ok] {detail}")
+        return
+
+    if cmd == "diagnose":
+        goals_content = None
+        if args.goals:
+            goals_content = Path(args.goals).read_text(encoding="utf-8")
+        result = diagnose_planning_readiness(config, goals_content=goals_content)
+        print(dumps_json(result))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
+
+    if cmd == "archive-done":
+        count, detail = archive_done_tasks(config)
+        print(f"[ok] {detail}")
+        if count == 0:
+            print("[info] No done tasks to archive.")
+        return
+
+    if cmd == "uncomplete":
+        ok, detail = uncomplete_task(config, task_id)
         if not ok:
             print(f"[error] {detail}", file=sys.stderr)
             raise SystemExit(1)
