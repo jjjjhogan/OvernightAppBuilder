@@ -213,3 +213,26 @@ def test_board_api_archive_and_tasks_log(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_board_api_open_folder(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    server = BoardServer(("127.0.0.1", 0), BoardHandler, config)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(
+        "overnight_app_maker.task_manager.subprocess.Popen",
+        lambda cmd: None,
+    )
+
+    try:
+        status, data = _request(port, "POST", "/api/tasks/TASK-001/open-folder", {})
+        assert status == 200
+        assert data["ok"] is True
+        assert "reports" in data["detail"]
+        assert (tmp_path / "reports").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

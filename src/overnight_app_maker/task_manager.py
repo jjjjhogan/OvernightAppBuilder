@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -219,6 +221,35 @@ def complete_task(
     if remove_prompt and removed:
         detail += " Removed queue prompt file."
     return True, detail
+
+
+def open_task_output_folder(
+    config: AppConfig,
+    task_id: str,
+) -> tuple[bool, str, str]:
+    task = get_task(config.backlog_file, task_id)
+    if not task:
+        return False, f"Task {task_id} not found.", ""
+
+    output_dir = str(task.get("output_dir", "reports")).strip() or "reports"
+    folder = (config.project_root / output_dir).resolve()
+    root = config.project_root.resolve()
+    try:
+        folder.relative_to(root)
+    except ValueError:
+        return False, "Output path is outside the project root.", ""
+
+    folder.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(folder)])  # noqa: S603
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(folder)])  # noqa: S603
+    else:
+        subprocess.Popen(["xdg-open", str(folder)])  # noqa: S603
+
+    rel = folder.relative_to(root).as_posix()
+    return True, f"Opened {rel}.", str(folder)
 
 
 def _resolve_goals_text(config: AppConfig, goals_content: str | None = None) -> str:

@@ -23,6 +23,7 @@ from ..task_manager import (
     diagnose_planning_readiness,
     export_diagnose_json,
     fresh_lab_session,
+    open_task_output_folder,
     plan_tasks_for_board,
     preview_plan_tasks,
     preview_task_prompt,
@@ -274,6 +275,15 @@ class BoardHandler(BaseHTTPRequestHandler):
                 return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
             task = show_task(self.config, task_id)
             return self._send_json(HTTPStatus.OK, {"ok": True, "detail": detail, "task": task})
+
+        if action == "open-folder":
+            ok, detail, folder_path = open_task_output_folder(self.config, task_id)
+            if not ok:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": detail})
+            return self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "detail": detail, "folder_path": folder_path},
+            )
 
         if action == "complete":
             ok, detail = complete_task(self.config, task_id, remove_prompt=remove_prompt)

@@ -16,6 +16,7 @@ from overnight_app_maker.task_manager import (
     diagnose_planning_readiness,
     fresh_lab_session,
     list_task_views,
+    open_task_output_folder,
     plan_tasks_for_board,
     preview_plan_tasks,
     preview_task_prompt,
@@ -339,3 +340,24 @@ def test_fresh_lab_session_archives_closed_tasks(tmp_path: Path) -> None:
     assert result["archived_cancelled"] == 1
     views = list_task_views(config)
     assert len(views) == 1
+
+
+def test_open_task_output_folder(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    _write_backlog(
+        config.backlog_file,
+        [{"id": "TASK-001", "title": "Research", "status": "queued", "output_dir": "research"}],
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "overnight_app_maker.task_manager.subprocess.Popen",
+        lambda cmd: calls.append(list(cmd)),
+    )
+
+    ok, detail, folder_path = open_task_output_folder(config, "TASK-001")
+    assert ok
+    assert "research" in detail
+    assert (tmp_path / "research").is_dir()
+    assert folder_path
+    assert calls
+    assert "research" in calls[0][-1]

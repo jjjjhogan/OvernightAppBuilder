@@ -30,6 +30,8 @@
     }
     button:hover { border-color: var(--accent); }
     button.primary { background: #264a6e; border-color: var(--accent); }
+    button.complete { border-color: #4a7a4a; color: var(--ok); }
+    button.complete:hover { border-color: var(--ok); background: #1e3a28; }
     button.danger { border-color: #7a3a3f; color: #ffd6d8; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .layout { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; min-height: calc(100vh - 64px); }
@@ -210,6 +212,7 @@
       <h3 id="task-detail-title">Task detail</h3>
       <pre class="prompt-box" id="task-detail-body" style="max-height:50vh;"></pre>
       <div class="modal-actions">
+        <button id="task-detail-open-folder">Open output folder</button>
         <button id="task-detail-close">Close</button>
       </div>
     </div>
@@ -239,8 +242,8 @@
 
   <div class="modal-overlay" id="run-modal">
     <div class="modal-panel">
-      <h3>Run task manually</h3>
-      <p class="hint">Copy a command for your OS. The worker prompt is shown on the right for review before you run OpenClaw.</p>
+      <h3 id="run-modal-title">Run task manually</h3>
+      <p class="hint">Copy the command, run it in your terminal, then mark complete here when OpenClaw finishes — no need to find the card again.</p>
       <div class="modal-split">
         <div>
           <p id="cmd-platform-label"><strong>Command</strong></p>
@@ -249,6 +252,8 @@
           <pre id="cmd-alt" style="display:none;"></pre>
           <div class="modal-actions">
             <button class="primary" id="copy-cmd">Copy command</button>
+            <button class="complete" id="run-modal-complete">Complete</button>
+            <button id="run-modal-open-folder">Open folder</button>
             <button id="run-modal-close">Close</button>
           </div>
         </div>
@@ -280,6 +285,8 @@
     let lastCommand = { primary: "", alt: "" };
     let savedGoalsContent = "";
     let pendingQueueTaskId = null;
+    let pendingRunTaskId = null;
+    let pendingDetailTaskId = null;
     let pendingPlanTitles = [];
 
     const boardEl = document.getElementById("board");
@@ -505,7 +512,30 @@
       }
     }
 
+    function closeAllModals() {
+      document.querySelectorAll(".modal-overlay").forEach(el => {
+        el.style.display = "none";
+      });
+      pendingQueueTaskId = null;
+      pendingRunTaskId = null;
+      pendingDetailTaskId = null;
+    }
+
+    async function openTaskFolder(taskId) {
+      if (!taskId) return;
+      try {
+        const data = await api(`/api/tasks/${taskId}/open-folder`, {
+          method: "POST",
+          body: "{}",
+        });
+        showToast(data.detail || "Opened folder.");
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+
     function showTaskDetail(task) {
+      pendingDetailTaskId = task.id;
       const lines = [
         `ID:          ${task.id}`,
         `Title:       ${task.title}`,
@@ -546,6 +576,13 @@
       detailBtn.textContent = "Details";
       detailBtn.addEventListener("click", () => showTaskDetail(task));
       actions.appendChild(detailBtn);
+
+      if (task.output_dir) {
+        const folderBtn = document.createElement("button");
+        folderBtn.textContent = "Folder";
+        folderBtn.addEventListener("click", () => openTaskFolder(task.id));
+        actions.appendChild(folderBtn);
+      }
 
       if (task.status === "todo" || task.status === "failed") {
         const queueBtn = document.createElement("button");
@@ -679,12 +716,14 @@
 
     async function showRunCommand(taskId) {
       try {
+        pendingRunTaskId = taskId;
         const data = await api(`/api/tasks/${taskId}/command`);
         const primary = isWindows ? data.powershell : data.bash;
         const alt = isWindows ? data.bash : data.powershell;
         const primaryLabel = isWindows ? "PowerShell / Windows" : "Bash / Mac";
         const altLabel = isWindows ? "Bash / Mac (alternate)" : "PowerShell / Windows (alternate)";
 
+        document.getElementById("run-modal-title").textContent = `Run ${taskId} manually`;
         document.getElementById("cmd-platform-label").innerHTML = `<strong>${primaryLabel}</strong>`;
         document.getElementById("cmd-primary").textContent = primary || "(unavailable — queue the task first)";
         document.getElementById("cmd-alt-label").textContent = alt ? altLabel : "";
@@ -695,6 +734,25 @@
 
         lastCommand = { primary, alt };
         document.getElementById("run-modal").style.display = "flex";
+      } catch (err) {
+        pendingRunTaskId = null;
+        showToast(err.message);
+      }
+    }
+
+    async function completeFromRunModal() {
+      if (!pendingRunTaskId) return;
+      const taskId = pendingRunTaskId;
+      try {
+        const data = await api(`/api/tasks/${taskId}/complete`, {
+          method: "POST",
+          body: JSON.stringify({ remove_prompt: false, ...goalsPayload() }),
+        });
+        document.getElementById("run-modal").style.display = "none";
+        pendingRunTaskId = null;
+        showToast(data.detail || `${taskId} marked complete.`);
+        await loadBoard();
+        await loadTasksLog();
       } catch (err) {
         showToast(err.message);
       }
@@ -799,9 +857,20 @@
       document.getElementById("plan-preview-modal").style.display = "none";
     });
     document.getElementById("task-detail-close").addEventListener("click", () => {
+      pendingDetailTaskId = null;
       document.getElementById("task-detail-modal").style.display = "none";
     });
+    document.getElementById("task-detail-open-folder").addEventListener("click", () => {
+      openTaskFolder(pendingDetailTaskId);
+    });
+    document.getElementById("run-modal-open-folder").addEventListener("click", () => {
+      openTaskFolder(pendingRunTaskId);
+    });
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeAllModals();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         saveGoals();
@@ -825,8 +894,10 @@
       document.getElementById("queue-modal").style.display = "none";
     });
     document.getElementById("run-modal-close").addEventListener("click", () => {
+      pendingRunTaskId = null;
       document.getElementById("run-modal").style.display = "none";
     });
+    document.getElementById("run-modal-complete").addEventListener("click", completeFromRunModal);
     document.getElementById("copy-cmd").addEventListener("click", async () => {
       if (lastCommand.primary && await copyText(lastCommand.primary)) {
         showToast("Command copied.");
