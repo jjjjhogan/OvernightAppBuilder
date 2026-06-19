@@ -220,6 +220,23 @@ def _run_tasks(args: argparse.Namespace) -> None:
         print(format_task_list(views))
         return
 
+    if cmd == "diagnose":
+        goals_content = None
+        if getattr(args, "goals", None):
+            goals_content = Path(args.goals).read_text(encoding="utf-8")
+        result = diagnose_planning_readiness(config, goals_content=goals_content)
+        print(dumps_json(result))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
+
+    if cmd == "archive-done":
+        count, detail = archive_done_tasks(config)
+        print(f"[ok] {detail}")
+        if count == 0:
+            print("[info] No done tasks to archive.")
+        return
+
     task_id = args.task_id.upper()
 
     if cmd == "show":
@@ -277,23 +294,6 @@ def _run_tasks(args: argparse.Namespace) -> None:
             print(f"[error] {detail}", file=sys.stderr)
             raise SystemExit(1)
         print(f"[ok] {detail}")
-        return
-
-    if cmd == "diagnose":
-        goals_content = None
-        if args.goals:
-            goals_content = Path(args.goals).read_text(encoding="utf-8")
-        result = diagnose_planning_readiness(config, goals_content=goals_content)
-        print(dumps_json(result))
-        if not result.get("ok"):
-            raise SystemExit(1)
-        return
-
-    if cmd == "archive-done":
-        count, detail = archive_done_tasks(config)
-        print(f"[ok] {detail}")
-        if count == 0:
-            print("[info] No done tasks to archive.")
         return
 
     if cmd == "uncomplete":
